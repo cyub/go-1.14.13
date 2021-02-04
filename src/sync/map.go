@@ -25,7 +25,7 @@ import (
 //
 // The zero Map is empty and ready for use. A Map must not be copied after first use.
 type Map struct {
-	mu Mutex
+	mu Mutex // 排他锁
 
 	// read contains the portion of the map's contents that are safe for
 	// concurrent access (with or without mu held).
@@ -48,6 +48,7 @@ type Map struct {
 	//
 	// If the dirty map is nil, the next write to the map will initialize it by
 	// making a shallow copy of the clean map, omitting stale entries.
+	// 新增key时候，只写入dirty map中，需要使用mu
 	dirty map[interface{}]*entry
 
 	// misses counts the number of loads since the read map was last updated that
@@ -56,6 +57,7 @@ type Map struct {
 	// Once enough misses have occurred to cover the cost of copying the dirty
 	// map, the dirty map will be promoted to the read map (in the unamended
 	// state) and the next store to the map will make a new dirty copy.
+	// 从read map中读取key miss次数
 	misses int
 }
 
@@ -67,6 +69,7 @@ type readOnly struct {
 
 // expunged is an arbitrary pointer that marks entries which have been deleted
 // from the dirty map.
+// expunged用来标记从dirty map删除掉了
 var expunged = unsafe.Pointer(new(interface{}))
 
 // An entry is a slot in the map corresponding to a particular key.
@@ -102,25 +105,27 @@ func newEntry(i interface{}) *entry {
 func (m *Map) Load(key interface{}) (value interface{}, ok bool) {
 	read, _ := m.read.Load().(readOnly)
 	e, ok := read.m[key]
-	if !ok && read.amended {
-		m.mu.Lock()
+	if !ok && read.amended { // key不存在read map中，且dirty map包含read map中不存在的key情况下
+		m.mu.Lock() // 加锁
 		// Avoid reporting a spurious miss if m.dirty got promoted while we were
 		// blocked on m.mu. (If further loads of the same key will not miss, it's
 		// not worth copying the dirty map for this key.)
-		read, _ = m.read.Load().(readOnly)
+		read, _ = m.read.Load().(readOnly) // 再次从read map读取key
 		e, ok = read.m[key]
 		if !ok && read.amended {
-			e, ok = m.dirty[key]
+			e, ok = m.dirty[key] // 从dirty map中读取key
 			// Regardless of whether the entry was present, record a miss: this key
 			// will take the slow path until the dirty map is promoted to the read
 			// map.
-			m.missLocked()
+			m.missLocked() // 将read map读取key时候miss的计数加1，若miss次数多于dirty map元素个数时候，则将dirty map升级为read map
+			// 并将amended置为false, dirty map置为nil
 		}
 		m.mu.Unlock()
 	}
-	if !ok {
+	if !ok { // read map 和 dirty map中都不存在
 		return nil, false
 	}
+	// 读取value值，若value值是nil或expunged，返回nil, false，表示key不存在
 	return e.load()
 }
 
@@ -135,30 +140,38 @@ func (e *entry) load() (value interface{}, ok bool) {
 // Store sets the value for a key.
 func (m *Map) Store(key, value interface{}) {
 	read, _ := m.read.Load().(readOnly)
+	// 如果read map存在该key，且该key对应的value不是expunged，则使用cas更新value，此操作是原子性的更新value
 	if e, ok := read.m[key]; ok && e.tryStore(&value) {
 		return
 	}
 
-	m.mu.Lock()
+	m.mu.Lock() // 先加锁，然后重新读取一次read map，目的是防止dirty map升级到read map（并发Load操作时候），read map更改了。
 	read, _ = m.read.Load().(readOnly)
 	if e, ok := read.m[key]; ok {
-		if e.unexpungeLocked() {
+		if e.unexpungeLocked() { // 若value是expunge，表明dirty中不存在此key，则先将value变成nil，然后把key-value同步到dirty map中
 			// The entry was previously expunged, which implies that there is a
 			// non-nil dirty map and this entry is not in it.
 			m.dirty[key] = e
 		}
-		e.storeLocked(&value)
-	} else if e, ok := m.dirty[key]; ok {
+		e.storeLocked(&value) // 更改value。value是指针类型，read map和dirty map的value都指向该值。
+	} else if e, ok := m.dirty[key]; ok { // 若dirty map存在该key，直接更改value
 		e.storeLocked(&value)
 	} else {
+		// key不存在read map，和dirty map中情况下
+		// amended - 改进、修正
+		// amended表示部分key存在dirty map中
 		if !read.amended {
 			// We're adding the first new key to the dirty map.
 			// Make sure it is allocated and mark the read-only map as incomplete.
-			m.dirtyLocked()
+			m.dirtyLocked() // dirtyLocked()做两件事情：1. 若dirty map等于nil，则初始化dirty map。
+			// 2. 遍历read map，将read map中的k-v复制到dirty map中，从read map中复制的k-v，要求v不是nil或expunged的(nil和expunged是key删除了的）。
+			// 同时将nil更改成expunged
 			m.read.Store(readOnly{m: read.m, amended: true})
 		}
+		// 添加k-v到dirty map中
 		m.dirty[key] = newEntry(value)
 	}
+	// 释放锁
 	m.mu.Unlock()
 }
 
