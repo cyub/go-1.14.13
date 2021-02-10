@@ -1,5 +1,7 @@
 ## waitgroup
 
+### 源码分析
+
 ```go
 type WaitGroup struct {
     noCopy noCopy // waitgroup是不能够拷贝复制的，是通过go vet来检测实现
@@ -93,3 +95,11 @@ func (wg *WaitGroup) Wait() {
 	}
 }
 ```
+
+### 总结
+
+- waitgroup是不能值传递的
+- Add方法的传值可以是负数，但加上该传值之后的waitgroup计数器值不能是负值
+- Done方法实际上调用的是Add(-1)
+- Add方法和Wait方法不能并发调用
+- Wait方法可以多次调用，调用此方法的goroutine会阻塞，一直阻塞到waitgroup计数器值变为0。
