@@ -6,8 +6,8 @@
 type WaitGroup struct {
     noCopy noCopy // waitgroup是不能够拷贝复制的，是通过go vet来检测实现
     
-    /* 
-    waitgroup使用一个int64来计数：高32位，用来add计数，低32位用来记录waiter数量。
+	/* 
+	waitgroup使用一个int64来计数：高32位，用来add计数，低32位用来记录waiter数量。
 	若要原子性更新int64就必须保证该int64对齐系数是8，即64位对齐。
 	对于64位系统，直接使用一个int64类型字段就能保证原子性要求，但对32位系统就不行了。
 
@@ -19,11 +19,11 @@ type WaitGroup struct {
 }
 
 func (wg *WaitGroup) state() (statep *uint64, semap *uint32) {
-    // 当state1是8对齐的，则返回低8字节(statep)用来计数，即state1[0]是add计数，state1[1]是waiter计数
+	// 当state1是8对齐的，则返回低8字节(statep)用来计数，即state1[0]是add计数，state1[1]是waiter计数
 	if uintptr(unsafe.Pointer(&wg.state1))%8 == 0 {
 		return (*uint64)(unsafe.Pointer(&wg.state1)), &wg.state1[2]
 	} else {
-        // 反之，则返回高8字节用来计数，即state1[1]是add计数，state1[2]是waiter计数
+		// 反之，则返回高8字节用来计数，即state1[1]是add计数，state1[2]是waiter计数
 		return (*uint64)(unsafe.Pointer(&wg.state1[1])), &wg.state1[0]
 	}
 }
@@ -50,7 +50,7 @@ func (wg *WaitGroup) Add(delta int) {
 		panic("sync: negative WaitGroup counter")
     }
     
-    // Add方法与Wait方法不能并发调用
+	// Add方法与Wait方法不能并发调用
 	if w != 0 && delta > 0 && v == int32(delta) {
 		panic("sync: WaitGroup misuse: Add called concurrently with Wait")
 	}
@@ -58,9 +58,9 @@ func (wg *WaitGroup) Add(delta int) {
 		return
     }
     
-    // statep指向state1字段，其指向的值和state进行比较，如果不一样，说明存在并发调用了Add和Wait方法
-    // 此时v = 0, w > 0，这个时候waitgroup的add计数和waiter计数不能再更改了。
-    // *statep != state情况举例：假定当前groutine是g1，执行到此处时, 恰好另外一个groutine g2并发调用了Wait方法，那么waitgroup的state1字段会更新，而g1中w的值还是g2调用Wait方法之前的waiter数，这会导致总有一个g永远得不到释放信号，从而造成g泄漏。所以此处要进行panic判断
+	// statep指向state1字段，其指向的值和state进行比较，如果不一样，说明存在并发调用了Add和Wait方法
+	// 此时v = 0, w > 0，这个时候waitgroup的add计数和waiter计数不能再更改了。
+	// *statep != state情况举例：假定当前groutine是g1，执行到此处时, 恰好另外一个groutine g2并发调用了Wait方法，那么waitgroup的state1字段会更新，而g1中w的值还是g2调用Wait方法之前的waiter数，这会导致总有一个g永远得不到释放信号，从而造成g泄漏。所以此处要进行panic判断
 	if *statep != state {
 		panic("sync: WaitGroup misuse: Add called concurrently with Wait")
     }
@@ -71,7 +71,7 @@ func (wg *WaitGroup) Add(delta int) {
 	}
 }
 
-// Done == Add(-1)
+// Done() == Add(-1)
 func (wg *WaitGroup) Done() {
 	wg.Add(-1)
 }
@@ -85,7 +85,7 @@ func (wg *WaitGroup) Wait() {
 		w := uint32(state)
 		// 使用for + cas进制，原子性更新waiter计数
 		if atomic.CompareAndSwapUint64(statep, state, state+1) {
-            // 更新成功后，开始获取信号，未获取到信号的话则当前g一直阻塞
+			// 更新成功后，开始获取信号，未获取到信号的话则当前g一直阻塞
 			runtime_Semacquire(semap)
 			if *statep != 0 {
 				panic("sync: WaitGroup is reused before previous Wait has returned")
