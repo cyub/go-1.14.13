@@ -5,5 +5,7 @@ Golang版本是go1.14.13
 ## 目录
 
 - sync
-	- [ ]Map
-	- [x][Waitgroup](./notes/sync/waitgroup.md)
+	- [x] [Map](./notes/sync/map.md)
+	- [x] [Waitgroup](./notes/sync/waitgroup.md)
+- misc
+	- [x] [no copy机制](./notes/misc/nocopy.md)

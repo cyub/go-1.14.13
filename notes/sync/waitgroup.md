@@ -60,7 +60,10 @@ func (wg *WaitGroup) Add(delta int) {
     
 	// statep指向state1字段，其指向的值和state进行比较，如果不一样，说明存在并发调用了Add和Wait方法
 	// 此时v = 0, w > 0，这个时候waitgroup的add计数和waiter计数不能再更改了。
-	// *statep != state情况举例：假定当前groutine是g1，执行到此处时, 恰好另外一个groutine g2并发调用了Wait方法，那么waitgroup的state1字段会更新，而g1中w的值还是g2调用Wait方法之前的waiter数，这会导致总有一个g永远得不到释放信号，从而造成g泄漏。所以此处要进行panic判断
+	// *statep != state情况举例：假定当前groutine是g1，执行到此处时, 
+	// 恰好另外一个groutine g2并发调用了Wait方法，
+	// 那么waitgroup的state1字段会更新，而g1中w的值还是g2调用Wait方法之前的waiter数，
+	// 这会导致总有一个g永远得不到释放信号，从而造成g泄漏。所以此处要进行panic判断
 	if *statep != state {
 		panic("sync: WaitGroup misuse: Add called concurrently with Wait")
     }
