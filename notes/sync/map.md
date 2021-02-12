@@ -181,7 +181,7 @@ func (m *Map) missLocked() {
 	}
 	
 	// 新创建一个readOnly对象，其中amended为false, 并将m.dirty直接赋值给该对象的m字段，
-	// 这也是上面思考中的dirtyLocked为什么要干事情2的原因，因为通过2操作之后，m.dirty已包含read map中的所有key，。可以直接拿来创建readOnly。
+	// 这也是上面思考中的dirtyLocked为什么要干事情2的原因，因为通过2操作之后，m.dirty已包含read map中的所有key，可以直接拿来创建readOnly。
 	m.read.Store(readOnly{m: m.dirty})
 	m.dirty = nil
 	m.misses = 0
