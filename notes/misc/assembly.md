@@ -275,7 +275,7 @@ Go 汇编还引入 4 个伪寄存器：
 
 - **FP**: Frame pointer: arguments and locals.
 
-  使用形如 symbol+offset(FP) 的方式，引用函数的输入参数。例如 arg0+0(FP)，arg1+8(FP)
+  - 使用形如 symbol+offset(FP) 的方式，引用函数的输入参数。例如 arg0+0(FP)，arg1+8(FP)
 
 - **PC**: Program counter: jumps and branches.
 
@@ -285,11 +285,11 @@ Go 汇编还引入 4 个伪寄存器：
 
   全局静态基指针，一般用来声明函数或全局变量
 
-- SP: Stack pointer: top of stack.
+- **SP**: Stack pointer: top of stack.
 
-  SP 寄存器指向当前栈帧的局部变量的开始位置，使用形如 symbol+offset(SP) 的方式，引用函数的局部变量。offset 的合法取值是 [-framesize, 0)。
+  SP寄存器指向当前栈帧的局部变量的开始位置，使用形如 symbol+offset(SP) 的方式，引用函数的局部变量。offset 的合法取值是 [-framesize, 0)。
 
-  手写汇编代码时，如果是 symbol+offset(SP) 形式，则表示伪寄存器 SP。如果是 offset(SP) 则表示硬件寄存器 SP。务必注意。**对于编译输出(go tool compile -S / go tool objdump)的代码来讲，目前所有的 SP 都是硬件寄存器 SP，无论是否带 symbol**。
+  手写汇编代码时，如果是 symbol+offset(SP) 形式，则表示伪寄存器 SP。如果是 offset(SP) 则表示硬件寄存器 SP。**对于编译输出(go tool compile -S / go tool objdump)的代码来讲，目前所有的 SP 都是硬件寄存器 SP，无论是否带 symbol**。
 
 ### 函数声明
 
@@ -380,16 +380,10 @@ $ objdump -j .text -t direct_topfunc_call | grep 'main.add'
 > 所有用户定义的符号都被写为相对于伪寄存器FP(参数以及局部值)和SB(全局值)的偏移量。
 > SB伪寄存器可以被认为是内存的起始位置，所以对于符号foo(SB)就是名称foo在内存的地址。
 
-> All user-defined symbols are written as offsets to the pseudo-registers FP (arguments and locals) and SB (globals).
-> The SB pseudo-register can be thought of as the origin of memory, so the symbol foo(SB) is the name foo as an address in memory.
-
 - `NOSPLIT`: 向编译器表明*不应该*插入 *stack-split* 的用来检查栈需要扩张的前导指令。
 在我们 `add` 函数的这种情况下，编译器自己帮我们插入了这个标记: 它足够聪明地意识到，由于 `add` 没有任何局部变量且没有它自己的栈帧，所以一定不会超出当前的栈；因此每次调用函数时在这里执行栈检查就是完全浪费 CPU 循环了。
 
-> "NOSPLIT": 不会插入前导码来检查栈是否必须被分裂。协程上的栈帧，以及他所有的调
-> 用，都必须存放在栈顶的空闲空间。用来保护协程诸如栈分裂代码本身。
-
-> "NOSPLIT": Don't insert the preamble to check if the stack must be split. The frame for the routine, plus anything it calls, must fit in the spare space at the top of the stack segment. Used to protect routines such as the stack splitting code itself.
+> "NOSPLIT": 不会插入前导码来检查栈是否必须被分裂。协程上的栈帧，以及他所有的调用，都必须存放在栈顶的空闲空间。用来保护协程诸如栈分裂代码本身。
 
 本章结束时会对 goroutines 和 stack-splits 进行简单介绍。
 
@@ -400,7 +394,6 @@ $ objdump -j .text -t direct_topfunc_call | grep 'main.add'
 > 于调用者的帧上。如果NOSPLIT没有在TEXT中指定，则必须提供参数大小。对于Go原型的
 > 汇编函数，go vet会检查参数大小是否正确。
 
-> In the general case, the frame size is followed by an argument size, separated by a minus sign. (It's not a subtraction, just idiosyncratic syntax.) The frame size $24-8 states that the function has a 24-byte frame and is called with 8 bytes of argument, which live on the caller's frame. If NOSPLIT is not specified for the TEXT, the argument size must be provided. For assembly functions with Go prototypes, go vet will check that the argument size is correct.
 
 ```Assembly
 0x0000 FUNCDATA $0, gclocals·f207267fbf96a0178e8758c6e3e0ce28(SB)
@@ -408,8 +401,6 @@ $ objdump -j .text -t direct_topfunc_call | grep 'main.add'
 ```
 
 > FUNCDATA以及PCDATA指令包含有被垃圾回收所使用的信息；这些指令是被编译器加入的。
-
-> The FUNCDATA and PCDATA directives contain information for use by the garbage collector; they are introduced by the compiler.
 
 现在还不要对这个太上心；在本书深入探讨垃圾收集时，会再回来了解这些知识。
 
@@ -428,8 +419,6 @@ Go 编译器不会生成任何 PUSH/POP 族的指令: 栈的增长和收缩是�
 > 它指向局部栈帧的顶部，所以应用应该使用负的偏移且范围在[-framesize, 0):
 > x-8(SP), y-4(SP), 等等。
 
-> The SP pseudo-register is a virtual stack pointer used to refer to frame-local variables and the arguments being prepared for function calls. It points to the top of the local stack frame, so references should use negative offsets in the range [−framesize, 0): x-8(SP), y-4(SP), and so on.
-
 尽管官方文档说 "*All user-defined symbols are written as offsets to the pseudo-register FP(arguments and locals)*"，实际这个原则只是在手写的代码场景下才是有效的。
 与大多数最近的编译器做法一样，Go 工具链总是在其生成的代码中，使用相对栈指针(stack-pointer)的偏移量来引用参数和局部变量。这样使得我们可以在那些寄存器数量较少的平台上(例如 x86)，也可以将帧指针(frame-pointer)作为一个额外的通用寄存器。
 如果你喜欢了解这些细节问题，可以参考本章后提供的 *Stack frame layout on x86-64* 一文。
@@ -445,11 +434,9 @@ Go 编译器不会生成任何 PUSH/POP 族的指令: 栈的增长和收缩是�
 > 移————的意义是与SB中的偏移不一样的，它是相对于符号的偏移。)汇编器强制执行这种
 > 约定，拒绝纯0(FP)以及8(FP)。实际名称与语义不想关，但应该用来记录参数的名字。
 
-> The FP pseudo-register is a virtual frame pointer used to refer to function arguments. The compilers maintain a virtual frame pointer and refer to the arguments on the stack as offsets from that pseudo-register. Thus 0(FP) is the first argument to the function, 8(FP) is the second (on a 64-bit machine), and so on. However, when referring to a function argument this way, it is necessary to place a name at the beginning, as in first_arg+0(FP) and second_arg+8(FP). (The meaning of the offset —offset from the frame pointer— distinct from its use with SB, where it is an offset from the symbol.) The assembler enforces this convention, rejecting plain 0(FP) and 8(FP). The actual name is semantically irrelevant but should be used to document the argument's name.
-
 最后，有两个重点需要指出:
-1. 第一个变量 `a` 的地址并不是 `0(SP)`，而是在 `8(SP)`；这是因为调用方通过使用 `CALL` 伪指令，把其返回地址保存在了 `0(SP)` 位置。
-2. 参数是反序传入的；也就是说，第一个参数和栈顶距离最近。
+1. **第一个变量 `a` 的地址并不是 `0(SP)`，而是在 `8(SP)`**；这是因为调用方通过使用 `CALL` 伪指令，把其返回地址保存在了 `0(SP)` 位置。
+2. **参数是反序传入的**；也就是说，第一个参数和栈顶距离最近。
 
 ```Assembly
 0x0008 ADDL CX, AX
@@ -473,8 +460,6 @@ Go 编译器不会生成任何 PUSH/POP 族的指令: 栈的增长和收缩是�
 > TEXT块的最后一条指令必须为某种形式的跳转，通常为RET(伪)指令。
 > (如果不是的话，链接器会添加一条跳转到自己的指令；TEXT块没有失败处理)
 
-> The last instruction in a TEXT block must be some sort of jump, usually a RET (pseudo-)instruction.
-> (If it's not, the linker will append a jump-to-itself instruction; there is no fallthrough in TEXTs.)
 
 我们一次性需要消化的语法和语义细节有点多。下面将我们已经覆盖到的知识点作为注释加进了汇编代码中:
 ```Assembly
@@ -703,6 +688,8 @@ epilogue 部分的代码就很直来直去了: 它直接调用 runtime 的函数
 
 
 ## 函数调用栈图
+
+Go汇编中函数调用的参数以及返回值都是由栈传递和保存的，这部分空间由`caller`在其栈帧(stack frame)上提供。Go汇编中没有使用PUSH/POP指令进行栈的伸缩处理，所有栈的增长和收缩是通过在栈指针寄存器`SP`上分别执行减法和加法指令来实现的。
 
 ```
                                                                                              

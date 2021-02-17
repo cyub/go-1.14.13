@@ -11,4 +11,4 @@ Golang版本是go1.14.13
 	- [ ] [slice](./notes/slice/slice.md)
 - misc
 	- [x] [no copy机制](./notes/misc/nocopy.md)
-	- [ ] [Go汇编](./notes/misc/assembly.md)
+	- [x] [Go汇编](./notes/misc/assembly.md)
