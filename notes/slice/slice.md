@@ -137,7 +137,6 @@ type slice struct {
 }
 ```
 
-
 结合汇编代码和切片底层结构，画出切片a在内存中存储结构图：
 
 ![](https://static.cyub.vip/images/202102/slice_define_assembly.jpeg)
@@ -179,8 +178,8 @@ type slice struct {
 ```go
 // et 是slice元素内存
 // old是旧的slice
-// cap是新slice最低要求cap大小。是旧的slice的len加上append函数中追加的元素的大小
-// 比如s := []int{1,2, 3}；append(s, 4,5)，此时growslice中的cap参数值为5
+// cap是新slice最低要求容量大小。是旧的slice的长度加上append函数中追加的元素的个数
+// 比如s := []int{1, 2, 3}；s = append(s, 4, 5); 此时growslice中的cap参数值为5
 func growslice(et *_type, old slice, cap int) slice {
 	if cap < old.cap {
 		panic(errorString("growslice: cap out of range"))
@@ -195,7 +194,7 @@ func growslice(et *_type, old slice, cap int) slice {
 	if cap > doublecap { // 最小cap要求大于旧slice的cap两倍大小
 		newcap = cap
 	} else {
-		if old.len < 1024 { // 当旧slice的len小于1024, 双倍扩容
+		if old.len < 1024 { // 当旧slice的len小于1024, 扩容一倍
 			newcap = doublecap
 		} else { // 否则每次扩容25%
 			for 0 < newcap && newcap < cap {
@@ -327,4 +326,15 @@ func growslice(et *_type, old slice, cap int) slice {
 	0x00da 00218 (main.go:7)	MOVQ	AX, "".a+128(SP) // 更新切片变量a的底层数组地址
 	0x00e2 00226 (main.go:7)	MOVQ	CX, "".a+136(SP) // 更新切片变量a的len
 	0x00ea 00234 (main.go:7)	MOVQ	DX, "".a+144(SP) // 更新切片变量a的cap
+```
+
+从上面代码中我们可以看出**切片的底层数组并不一定都是分配到堆上**，这里面的切片a的底层数组是分配在main函数的栈上。我们可以通过内存逃逸分析验证这一点：
+
+```
+vagrant@vagrant:/tmp/slice$ go build -gcflags '-m -l' main.go
+# command-line-arguments
+./main.go:6:12: []int literal does not escape
+./main.go:8:13: ... argument does not escape
+./main.go:8:17: len(a) escapes to heap
+./main.go:8:25: cap(a) escapes to heap
 ```
