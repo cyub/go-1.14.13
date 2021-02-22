@@ -324,11 +324,6 @@ eax | ebx | ecx | edx | esi | edi | ebp | eax
 
 `int $0x80`软性中断实现系统调用的性能不太好。
 
-## 指令周期
-
-指令周期（Instruction Cycle）指的CPU从内存取出一条指令并执行这条指令的时间总和。
-
-
 ### 使用专有系统调用指令
 
 Linux为了解决软件中断实现的系统调用在 Pentium 4 的处理器上表现非常差的问题，Linux新版本使用了专有的系统调用指令来完成系统调用。在32位系统下，它们是SYSENTER / SYSEXIT指令；64位的操作系统下是SYSCALL / SYSRET指令。
@@ -357,6 +352,10 @@ vDSO 使用了标准的链接和加载技术，作为一个动态链接库，它
 7ffdcc3b8000-7ffdcc3ba000 r-xp 00000000 00:00 0                          [vdso]
 ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
 ```
+
+## 指令周期
+
+指令周期（Instruction Cycle）指的CPU从内存取出一条指令并执行这条指令的时间总和。
 
 #  Go 汇编
 
@@ -918,3 +917,4 @@ go build -gcflags="-N -l -S"  main.go
 - [x86 Assembly/Interfacing with Linux](https://en.wikibooks.org/wiki/X86_Assembly/Interfacing_with_Linux)
 - [为什么系统调用会消耗较多资源](https://draveness.me/whys-the-design-syscall-overhead/)
 - [x86 Assembly book](https://en.wikibooks.org/wiki/X86_Assembly#Table_of_Contents)
+- [LINUX SYSTEM CALL TABLE FOR X86 64](http://blog.rchapman.org/posts/Linux_System_Call_Table_for_x86_64/)
