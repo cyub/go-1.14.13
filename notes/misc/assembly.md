@@ -155,6 +155,37 @@ Low Addresses ----> '----------------------'
 
 ![](https://static.cyub.vip/images/202102/process_mem_layout.jpeg)
 
+在32位系统中分配的进程空间范围是从0x08048000开始，到0xbfffffff结束。进程实际的esp指向的地址并不是从0xbfffffff开始的，因为linux系统会在程序初始化前，将一些命令行参数及环境变量以及`ELF Auxiliary Vectors`等信息放到栈上。具体布局如下：
+
+```
+stack pointer ->    [ argc = number of args ]     4
+                    [ argv[0] (pointer) ]         4   (program name)
+                    [ argv[1] (pointer) ]         4
+                    [ argv[..] (pointer) ]        4 * x
+                    [ argv[n - 1] (pointer) ]     4
+                    [ argv[n] (pointer) ]         4   (= NULL)
+
+                    [ envp[0] (pointer) ]         4
+                    [ envp[1] (pointer) ]         4
+                    [ envp[..] (pointer) ]        4
+                    [ envp[term] (pointer) ]      4   (= NULL)
+
+                    [ auxv[0] (Elf32_auxv_t) ]    8
+                    [ auxv[1] (Elf32_auxv_t) ]    8
+                    [ auxv[..] (Elf32_auxv_t) ]   8
+                    [ auxv[term] (Elf32_auxv_t) ] 8   (= AT_NULL vector)
+
+                    [ padding ]                   0 - 16
+
+                    [ argument ASCIIZ strings ]   >= 0
+                    [ environment ASCIIZ strings ]   >= 0
+                    [ program name ASCIIZ strings ]   >= 0
+
+  (0xbffffffc)      [ end marker ]                4   (= NULL)
+
+  (0xc0000000)      < bottom of stack >           0   (virtual)
+```
+
 ### 多线程堆栈空间布局
 
 多线程中每个线程都需要有单独的堆栈。主线程的堆栈都是从在内核边界的位置开始(32位系统下，内核空间占用1G大小）。下一个线程的堆栈从某个偏移量开始，该偏移量定义了主线程的最大堆栈大小。线程API允许设置堆栈大小。
@@ -255,7 +286,77 @@ power:
 
 ## PC
 
-PC指的是程序计数器， 是`Program Counter`的缩写，是一个中央处理器中的寄存器，用于指示计算机在其程序序列中的位置。在Intel x86和Itanium微处理器中，它叫做指令指针（instruction pointer，IP），有时又称为指令地址寄存器（instruction address register，IAR）
+`PC`指的是程序计数器，是`Program Counter`的缩写，是一个中央处理器中的寄存器，用于指示计算机在其程序序列中的位置。在Intel x86和Itanium微处理器中，它叫做指令指针（instruction pointer，IP），有时又称为指令地址寄存器（instruction address register，IAR）
+
+## x86-32 vs x86-64 vs AMD64
+
+x86-32是32位Intel处理器，是从`Intel 80386`开始支持的。x86-32是兼容16位Intel x86架构的（比如 Intel 8086 - 80286 的CPU)。**x86-32架构下的汇编称为`IA-32 Assembly`**。
+
+x86-64是64位Intel处理器，简称x64，是基于x86架构的拓展而来，向后兼容16位及32位的架构。**x86-64也可以称为AMD 64**。x86-32和x86-64都统称为x86。
+
+AMD 64是amd最先开发出来的兼容x86的指令集。x86-64与AMD64基本相同但有细节上的区别，AMD 64是x86-64的实际标准。
+
+苹果、RPM包管理、Arch Linux称之为x86-64或x86_64，甲骨文和微软称之为x64，BSD和其他Linux发行版称之为amd64。
+
+## 系统调用
+
+系统调用（system call）指的是运行在用户空间的程序向操作系统内核请求需要更高权限运行的服务。
+
+CPU特权级别一般来说总共有4个，从最高特权的Ring 0到最低特权的Ring 3。在大多数操作系统中，Ring 0拥有最高特权，并且可以和最多的硬件直接交互（比如CPU，内存）。这种分级保护策略称为CPU环（CPU Rings），是用来在发生故障时保护数据和功能，提升容错度，避免恶意操作，提升计算机安全的一种设计方式。
+
+![CPU rings](https://static.cyub.vip/images/202102/cpu_priv_rings.png)
+
+在Linux上用户态对应Ring 3，内核态对应Ring 0，当应用程序想要使用特权指令，控制中断、修改页表、访问设备等时候，应用程序就需要执行系统调用，完成CPU的运行级别会从Ring 3到Ring 0的切换，并跳转到系统调用对应的内核代码位置执行相关操作。
+
+ Linux 执行系统调用一共有三种方法：
+
+- 使用软件中断（Software interrupt）触发系统调用
+- 使用 SYSCALL / SYSENTER 等汇编指令触发系统调用
+- 使用虚拟动态共享对象（virtual dynamic shared object、vDSO）执行系统调用
+
+### 软件中断
+
+中断分成硬件和软件中断两种，硬件中断是由处理器外部的设备触发的电子信号；而软件中断是由处理器在执行特定指令时触发的。x86 的系统上，我们可以使用`int $0x80`指令来触发软件中断，完成系统调用。使用`int $0x80`进行调用时候的调用约定如下：
+
+system call number | 1<sup>st</sup> parameter | 2<sup>nd</sup> parameter | 3<sup>rd</sup> parameter | 4<sup>th</sup> parameter | 5<sup>th</sup> parameter | 6<sup>th</sup> parameter | result
+--- | --- | --- | --- | --- | --- | --- | --- |
+eax | ebx | ecx | edx | esi | edi | ebp | eax
+
+`int $0x80`软性中断实现系统调用的性能不太好。
+
+## 指令周期
+
+指令周期（Instruction Cycle）指的CPU从内存取出一条指令并执行这条指令的时间总和。
+
+
+### 使用专有系统调用指令
+
+Linux为了解决软件中断实现的系统调用在 Pentium 4 的处理器上表现非常差的问题，Linux新版本使用了专有的系统调用指令来完成系统调用。在32位系统下，它们是SYSENTER / SYSEXIT指令；64位的操作系统下是SYSCALL / SYSRET指令。
+
+与 INT 0x80 通过触发软件中断实现系统调用不同，SYSENTER 和 SYSCALL 是专门为系统调用设计的汇编指令，它们不需要在中断描述表（Interrupt Descriptor Table、IDT）中查找系统调用对应的执行过程，也不需要保存堆栈和返回地址等信息，所以能够减少所需要的额外开销。
+
+`SYSCALL`指令的调用约定如下：
+
+system call number | 1<sup>st</sup> parameter | 2<sup>nd</sup> parameter | 3<sup>rd</sup> parameter | 4<sup>th</sup> parameter | 5<sup>th</sup> parameter | 6th parameter | result
+--- | --- | --- | --- | --- | --- | --- | --- |
+rax | rdi | rsi | rdx | r10 | r8 | r9 | rax
+
+### vDOS
+
+虚拟动态共享对象（virtual dynamic shared object、vDSO）是 Linux 内核对用户空间暴露内核空间部分函数的一种机制，简单来说，是将 Linux 内核中不涉及安全的系统调用直接映射到用户空间，这样用户空间中的应用程序在调用这些函数时就不需要切换到内核态以减少性能上的损失。vDSO 中含 gettimeofday、clock_gettime、clock_getres、rt_sigreturn 等系统调用
+
+vDSO 使用了标准的链接和加载技术，作为一个动态链接库，它由 Linux 内核提供并映射到每一个正在执行的进程中，我们可以使用如下所示的命令查看该动态链接库在进程中的位置：
+
+```
+...
+02078000-02099000 rw-p 00000000 00:00 0                                  [heap]
+7f80c99f9000-7f80c99fa000 rw-p 00026000 fc:00 799776                     /lib/x86_64-linux-gnu/ld-2.23.so
+7f80c99fa000-7f80c99fb000 rw-p 00000000 00:00 0
+7ffdcc361000-7ffdcc383000 rw-p 00000000 00:00 0                          [stack]
+7ffdcc3b6000-7ffdcc3b8000 r--p 00000000 00:00 0                          [vvar]
+7ffdcc3b8000-7ffdcc3ba000 r-xp 00000000 00:00 0                          [vdso]
+ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
+```
 
 #  Go 汇编
 
@@ -812,6 +913,8 @@ go build -gcflags="-N -l -S"  main.go
 
 - [Go官方：A Quick Guide to Go's Assembler](https://golang.org/doc/asm)
 - [plan9 assembly 完全解析](https://github.com/cch123/golang-notes/blob/master/assembly.md)
-- [Go Assembly](https://cmc.gitbook.io/go-internals/chapter-i-go-assembly)
 - [EAX x86 Register Meaning and History](https://keleshev.com/eax-x86-register-meaning-and-history/)
 - [teh-cmc/go-internals中文版](https://github.com/go-internals-cn/go-internals)
+- [x86 Assembly/Interfacing with Linux](https://en.wikibooks.org/wiki/X86_Assembly/Interfacing_with_Linux)
+- [为什么系统调用会消耗较多资源](https://draveness.me/whys-the-design-syscall-overhead/)
+- [x86 Assembly book](https://en.wikibooks.org/wiki/X86_Assembly#Table_of_Contents)
