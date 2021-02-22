@@ -14,6 +14,6 @@ Golang版本是go1.14.13
 - misc
 	- [x] [no copy机制](./notes/misc/nocopy.md)
 	- [x] [Go汇编](./notes/misc/assembly.md)
-	- [ ] [runtime hacking](./notes/misc/runtime.md)
+	- [x] [runtime hacking](./notes/misc/runtime.md)
 	- [ ] [逃逸分析](./notes/misc/escape-analysis.md)
 	- [x] [GDB使用](./notes/misc/gdb.md)
