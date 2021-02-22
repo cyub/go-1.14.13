@@ -4,6 +4,8 @@ Golang版本是go1.14.13
 
 ## 目录
 
+- 运行流程
+	- [ ] [启动流程](./notes/bootstrap/load.md)
 - sync
 	- [x] [Map](./notes/sync/map.md)
 	- [x] [Waitgroup](./notes/sync/waitgroup.md)
@@ -14,4 +16,4 @@ Golang版本是go1.14.13
 	- [x] [Go汇编](./notes/misc/assembly.md)
 	- [ ] [runtime hacking](./notes/misc/runtime.md)
 	- [ ] [逃逸分析](./notes/misc/escape-analysis.md)
-	- [ ] [GDB使用](./notes/misc/gdb.md)
+	- [x] [GDB使用](./notes/misc/gdb.md)

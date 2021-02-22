@@ -1,6 +1,6 @@
 ## GDB简介
 
-GDB（GNU Debugger）是 UNIX 以及 类UNIX 系统下的强大调试工具，可以用来调试ada, c, c++, asm, minimal, d, fortran, objective-c, go, java,pascal 等多种语言。
+GDB（GNU symbolic Debugger）是Linux系统下的强大的调试工具，可以用来调试ada, c, c++, asm, minimal, d, fortran, objective-c, go, java,pascal 等多种语言。
 
 我们以调试`go`代码为示例来介绍GDB的使用。源码内容如下：
 
@@ -20,7 +20,7 @@ func main() {
 }
 ```
 
-构建ELF格式应用，并支持GDB调试：
+构建二进制应用：
 
 ```bash
 go build -gcflags="-N -l" -o test main.go
@@ -31,14 +31,14 @@ go build -gcflags="-N -l" -o test main.go
 ```bash
 gdb ./test
 ```
-进入gdb调试界面之后，执行`run`命令运行程序
-
-若程序已经运行，我们可以`attach`进程id进行调试:
+进入gdb调试界面之后，执行`run`命令运行程序。若程序已经运行，我们可以`attach`该程序的进程id进行调试:
 
 ```bash
 $ gdb
 (gdb) attach 1785
 ```
+
+当执行`attach`命令的时候，GDB首先会在当前工作目录下查找进程的可执行程序，如果没有找到，接着会用源代码文件搜索路径。我们也可以用file命令来加载可执行文件。
 
 或者通过命令设置进程id:
 
@@ -53,16 +53,17 @@ gdb test --pid 1785
 $ gdb
 (gdb) file test
 Reading symbols from test...done.
-(gdb)attach 1785
+(gdb) attach 1785
 ```
 
-GDB也支持多窗口图形启动运行，一个窗口显示源码信息，一个窗口显示调试信息。GDB支持在运行过程中使用`Crtl+X+A`组合键进入多窗口图形界面：
+GDB也支持多窗口图形启动运行，一个窗口显示源码信息，一个窗口显示调试信息：
 
 ```bash
- gdb test -tui
+gdb test -tui
 ```
 
-GDB支持的快捷操作：
+GDB支持在运行过程中使用`Crtl+X+A`组合键进入多窗口图形界面， GDB支持的快捷操作有：
+
 ```
 Crtl+X+A // 多窗口与单窗口界面切换
 Ctrl + X + 2 // 显示两个窗口
@@ -108,11 +109,11 @@ GDB中是通过`break`命令来设置断点(BreakPoint)，`break`可以简写成
 
 - **break linenum**
 
-    在指定行号出设置断点
+    在指定行号处设置断点
 
 - break +offset/-offset
 
-    在当前行号的前面或后面的offset行出设置断点。offset为自然数
+    在当前行号的前面或后面的offset行处设置断点。offset为自然数
 
 - break filename:linenum
 
@@ -122,12 +123,12 @@ GDB中是通过`break`命令来设置断点(BreakPoint)，`break`可以简写成
 
     在源文件filename的function函数的入口处设置断点
 
-- **break *address**
+- **break \*address**
 
     在程序运行的内存地址处设置断点
 
 - break
-    
+
     break命令没有参数时，表示在下一条指令处停住。
 
 - break ... if <condition>
@@ -154,14 +155,15 @@ GDB中是通过`break`命令来设置断点(BreakPoint)，`break`可以简写成
 ### 断点启用与禁用
 
 ```bash
-disable/enable 3 # 启用或禁用3号断点
+(gdb) disable 3 # 禁用3号断点
+(gdb) enable 3 # 启用3号断点
 ```
 
 ## 调试
 
 ### 单步执行
 
-`next`用于单步执行，会一行行执行代码，运到函数时候，不会进入到函数内部。可以简写成`n`。
+`next`用于单步执行，会一行行执行代码，运到函数时候，不会进入到函数内部，跳过该函数，但会执行该函数，即`step over`。可以简写成`n`。
 
 ```bash
 (gdb) next
@@ -169,7 +171,7 @@ disable/enable 3 # 启用或禁用3号断点
 
 ### 单步进入
 
-`step`用于单步进入执行，跟`next`命令类似，但是遇到函数时候，会进入到函数内部一步步执行。可以简写成`s`。
+`step`用于单步进入执行，跟`next`命令类似，但是遇到函数时候，会进入到函数内部一步步执行，即`step into`。可以简写成`s`。
 
 ```bash
 (gdb) step
@@ -213,7 +215,7 @@ disable/enable 3 # 启用或禁用3号断点
 
 ### 执行完成当前函数
 
-`finish`命令用来将当前函数执行完，并打印函数返回时的堆栈地址和返回值及参数值等信息
+`finish`命令用来将当前函数执行完成，并打印函数返回时的堆栈地址、返回值、参数值等信息，即`step out`。
 
 ```bash
 (gdb) finish
@@ -273,17 +275,17 @@ GDB中的`list`命令用来显示源码信息。`list`命令可以简写成`l`�
 
 - info all-registers
 
-    显示所有寄存器的值
+    显示所有寄存器的值。GDB提供四个标准寄存器：pc是程序计数器寄存器，sp是堆栈指针。fp用于记录当前堆栈帧的指针，ps用于记录处理器状态的寄存器，GDB会处理好不同架构系统寄存器不一致问题，比如对于amd64架构，pc对应就是rip寄存器。
 
-- info all
+    引用寄存器内容是将寄存器名前置$符作为变量来用。比如$pc就是程序计数器寄存器值。
 
 - info args
 
-    显示当前函数参数的值
+    显示当前函数参数
 
 - info locals
 
-    显示当前局部变量的值
+    显示当前局部变量
 
 - **info frame**
 
@@ -297,7 +299,7 @@ GDB中的`list`命令用来显示源码信息。`list`命令可以简写成`l`�
 
     查看程序中的函数符号
 
-- info functions regex
+- info functions regexp
 
     通过正则匹配来查看程序中的函数符号
 
@@ -313,15 +315,39 @@ GDB中的`list`命令用来显示源码信息。`list`命令可以简写成`l`�
 
     可以简写成`i proc m`。用来查看应用内存映射
 
+- info proc [procid]
+
+    显示进程信息
+
+- info proc status
+
+    显示进程相关信息，包括user id和group id；进程内有多少线程；虚拟内存的使用；挂起的信号，阻塞的信号，忽略的信号；TTY；消耗的系统和用户时间；堆栈大小；nice值
+
 - info display
 
 - info watchpoints
 
     列出当前所设置了的所有观察点
 
-- info line linenum
+- info line [linenum]
 
-    查看第linenum的代码指令地址信息
+    查看第linenum的代码指令地址信息，不带linenum时，显示的是当前位置的指令地址信息
+
+- info source
+
+    显示此源代码的源代码语言
+
+- info sources
+
+    显示程序中所有有调试信息的源文件名，一共显示两个列表：一个是其符号信息已经读过的，一个是还未读取过的
+
+- info types
+
+    显示程序中所有类型符号
+
+- info types regexp
+
+    通过正则匹配来查看程序中的类型符号
 
 其他类似命令有：
 
@@ -336,6 +362,14 @@ GDB中的`list`命令用来显示源码信息。`list`命令可以简写成`l`�
 - show paths
 
     查看程序的运行路径
+
+- whatis var1
+
+    显示变量var1类型
+
+- ptype var1
+
+    显示变量var1类型，若是var1结构体类型，会显示该结构体定义信息。
 
 ## 查看调用栈
 
@@ -384,9 +418,9 @@ GDB默认显示汇编指令格式是AT&T格式，我们可以改成intel格式�
 (gdb) set disassembly-flavor intel
 ```
 
-## 动态查看变量值
+## 自动显示变量值
 
-`display`命令支持动态显示变量值功能。当进行next或者step等调试操作时候，GDB会自动显示`display`所设置的变量或者地址的值信息。
+`display`命令支持自动显示变量值功能。当进行next或者step等调试操作时候，GDB会自动显示`display`所设置的变量或者地址的值信息。
 
 `display`命令格式：
 
@@ -450,13 +484,17 @@ GDB中有一组命令能够辅助多线程的调试：
 
     显示当前可调式的所有线程，线程 ID 前有 “*” 表示当前被调试的线程。
 
-- thread id
+- thread threadid
 
-    调试目标 id 指定的线程
+    切换线程到线程threadid
 
 - set scheduler-locking [on|off|step]
 
     多线程环境下，会存在多个线程运行，这会影响调试某个线程的结果，这个命令可以设置调试的时候多个线程的运行情况，on 表示只有当前调试的线程会继续执行，off 表示不屏蔽任何线程，所有线程都可以执行，step 表示在单步执行时，只有当前线程会执行。
+
+- thread apply [threadid] [all] args
+
+    对线程列表执行命令。比如通过`thread apply all bt full`可以查看所有线程的局部变量信息。
 
 
 ## 查看运行时变量
@@ -491,7 +529,7 @@ expr可以是一个变量，也可以是表达式，也可以是寄存器：
 
 `print`也支持查看连续内存，`@`操作符用于查看连续内存，`@`的左边是第一个内存的地址的值，`@`的右边则想查看内存的长度。
 
-例如，对于如下代码：`int arr[] = {2, 4, 6, 8, 10};`，可以通过如下命令查看arr前三个单元的数据：
+例如对于如下代码：`int arr[] = {2, 4, 6, 8, 10};`，可以通过如下命令查看arr前三个单元的数据：
 
 ```bash
 (gdb) p *arr@3
@@ -506,17 +544,20 @@ $2 = {2, 4, 6}
 - n 表示显示字段的长度，也就是说从当前地址向后显示几个地址的内容。
 
 - f 表示显示的格式
-    - d 整数 integer
+    - d 数字 decimal
+    - u 无符号数字 unsigned decimal
     - s 字符串 string
     - c 字符 char
     - u 无符号整数 unsigned integer
-    - t 二进制
-    - o 八进制格式
-    - x 十六进制格式
+    - t 二进制 binary
+    - o 八进制格式 octal
+    - x 十六进制格式 hex
     - f 浮点数格式 float
+    - i 指令 instruction
+    - a 地址 address
 
 - u 表示从当前地址往后请求的字节数，默认是4个bytes
-    - b 一个字节
+    - b 一个字节 byte
     - h 两个字节 halfword
     - w 四个字节 word
     - g 八个字节 giantword
@@ -539,8 +580,27 @@ $2 = {2, 4, 6}
 `set`命令支持修改变量以及寄存器的值：
 
 ```bash
-set var var1=123 # 设置变量var1值为123
-set var $rax=123 # 设置寄存器值为123
+(gdb) set var var1=123 # 设置变量var1值为123
+(gdb) set var $rax=123 # 设置寄存器值为123
+(gdb) set environment envname1=123 # 设置环境变量envname1值为123
+```
+
+## 查看命令帮助信息
+
+`help`命令支持查看GDB命令帮助信息。
+
+```bash
+(gdb) help status # 查看所有命令使用示例
+(gdb) help x # 查看x命令使用帮助
+```
+
+## 搜索源文件
+
+`search`命令支持在当前文件中使用正则表达式搜索内容。`search`等效于`forward-search`命令，是从当前位置向前搜索，可以简写成`fo`。`reverse-search`命令功能跟`forward-search`恰好相反，其可以简写成`rev`。
+
+```bash
+(gdb) search func add # 从当前位置向前搜索add方法
+(gdb) rev func add # 从当前为向后搜索add方法
 ```
 
 ## 资料
