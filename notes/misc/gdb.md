@@ -469,7 +469,7 @@ display /<fmt> <addr>
 `frame`命令可以切换栈帧信息：
 
 ```bash
-(gdb frame n # 其中n是层数，最内层的函数帧为第0帧
+(gdb) frame n # 其中n是层数，最内层的函数帧为第0帧
 ```
 
 其他相关命令：
@@ -515,6 +515,7 @@ format用来设置显示变量的格式，可选的。可用值有如下：
 - a 按十六进制格式显示变量
 - c 按字符格式显示变量
 - f 按浮点数格式显示变量
+- z 按十六进制格式显示变量，左侧填充零
 
 expr可以是一个变量，也可以是表达式，也可以是寄存器：
 
@@ -555,6 +556,7 @@ $2 = {2, 4, 6}
     - f 浮点数格式 float
     - i 指令 instruction
     - a 地址 address
+    - z 十六进制格式，左侧填充零 hex, zero padded on the left
 
 - u 表示从当前地址往后请求的字节数，默认是4个bytes
     - b 一个字节 byte
@@ -575,7 +577,7 @@ $2 = {2, 4, 6}
 (gdb) x 0xc000068fd0 # 打印内存0xc000068fd0指向的值
 ```
 
-## 修改变量或寄存器
+## 修改变量或寄存器值
 
 `set`命令支持修改变量以及寄存器的值：
 
@@ -601,6 +603,15 @@ $2 = {2, 4, 6}
 ```bash
 (gdb) search func add # 从当前位置向前搜索add方法
 (gdb) rev func add # 从当前为向后搜索add方法
+```
+
+## 执行shell命令
+
+我们可以通过`shell`指令来执行shell命令。
+
+```bash
+(gdb) shell cat /proc/27889/maps # 查看进程27889的内存映射。若想查看当前进程id，可以使用info proc命令获取
+(gdb) shell ls -alh
 ```
 
 ## 资料
