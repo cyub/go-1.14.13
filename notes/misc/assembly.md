@@ -6,9 +6,9 @@
 
 ## 汇编语言
 
-机器指令是由0和1组成的二进制指令，难以编写与记忆。汇编语言是二进制指令的文本形式，与机器指令一一对应，相当于机器指令的助记码。比如，加法的机器指令是`00000011`写成汇编语言就是`ADD`。
+机器指令是由0和1组成的二进制指令，难以编写与记忆。汇编语言是二进制指令的文本形式，与机器指令一一对应，相当于机器指令的助记码。比如，加法的机器指令是`00000011`写成汇编语言就是`ADD`。**汇编的指令格式由操作码和操作数组成**。
 
-将助记码标准化后称为`assembly language`，缩写为`asm`，中文译为汇编语言
+将助记码标准化后称为`assembly language`，缩写为`asm`，中文译为汇编语言。
 
 汇编语言大致可以分为两类：
 
@@ -17,7 +17,7 @@
     - Intel 汇编
         - DOS(8086处理器), Windows
         - Windows 派系 -> VC 编译器
-    - AT&T汇编
+    - AT&T 汇编
         - Linux, Unix, Mac OS, iOS(模拟器)
         - Unix派系 -> GCC编译器
 2. 基于ARM 架构处理器的汇编语言
@@ -199,9 +199,20 @@ stack pointer ->    [ argc = number of args ]     4
 
 更多内容参加[Why stack grows down](https://gist.github.com/cpq/8598782)
 
-## 寻址方式
+## AT&T 汇编语法
 
-寻址方式就是CPU根据指令中给出的地址信息来寻找有效地址的方式，是确定本条指令的数据地址以及下一条要执行的指令地址的方法
+AT＆T汇编语法是类Unix的系统上的标准汇编语法，比如gcc、gdb中默认都是使用AT&T汇编语法。AT&T汇编的指令格式如下：
+
+```
+instruction src dst
+```
+其中`instruction`是指令助记符，也叫操作码，比如`mov`就是一个指令助记符，`src`是源操作数，`dst`是目的操作。
+
+当引用寄存器时候，应在寄存器名称加前缀`%`，对于常数，则应加前缀`$`。
+
+### 寻址方式
+
+寻址方式即指令中提供操作数或者操作数地址的方式。
 
 寻址方式 | 寻址指令 | 解释
 ---|---|---
@@ -211,7 +222,18 @@ stack pointer ->    [ argc = number of args ]     4
 间接寻址方式 | mov (%eax), %ebx | 从寄存器%eax中存储的地址加载值到%ebx寄存器中
 基址寻址方式 | movl 4(%eax), %ebx | 将寄存器%eax中存储的地址加上4字节后得到地址，从该地址加载数据到寄存器%ebx中
 
-寻址方式其实就是传递数据的方式。传递数据的大小由mov指令的后缀决定。
+### 指令分类
+
+#### 数据传输指令
+
+指令 | 表达式
+--- | ---
+movb $0x05, %al | R[al] = 0x05
+movl %eax, -4(%ebp)  | mem[R[ebp] -4] = R[eax]
+movl -4(%ebp), %eax | R[eax] = mem[R[ebp] -4]
+movl $LC0, (%esp) | mem[R[esp]] = $LC0
+
+当使用`mov`指令传递数据时，数据的大小由mov指令的后缀决定。
 
 ```as
 movb $123, %eax // 1 byte
@@ -219,6 +241,44 @@ movw $123, %eax // 2 byte
 movl $123, %eax // 4 byte
 movq $123, %eax // 8 byte
 ```
+
+#### 算术运算指令
+
+指令 | 含义
+--- | ---
+subl $0x05, %eax | R[eax] = R[eax] - 0x05
+subl %eax, -4(%ebp) | mem[R[ebp] -4] = mem[R[ebp] -4] - R[eax]
+subl -4(%ebp), %eax | R[eax] = R[eax] - mem[R[ebp] -4]
+
+#### 跳转指令
+
+指令 | 含义
+--- | --- 
+cmpl %eax %ebx | 计算 R[eax] - R[ebx], 然后设置flags寄存器
+jmp location| 无条件跳转到location
+je location | 如果flags寄存器设置了相等标志，则跳转到location
+jg, jge, jl, gle, jnz, ... location | 如果flags寄存器设置了>, >=, <, <=, != 0等标志，则跳转到location
+
+
+#### 栈管理指令
+
+指令 | 含义 | 等同操作
+--- | --- | ---
+pushl %eax | 将R[eax]入栈 | subl $4, %esp; <br/>movl %eax, (%esp)
+popl %eax | 将栈顶数据弹出，然后存储到R[eax] | movl (%esp), %eax <br/> addl $4, %esp
+leave | Restore the callers stack pointer | movl %ebp, %esp <br/>pop %ebp
+
+#### 函数调用指令
+
+指令 | 含义
+--- | ---
+call label | 调用函数，并将返回地址入栈
+ret | 从栈中弹出返回地址，并跳转至该返回地址
+leave | Restore the callers stack pointer
+
+**注意：** 以上指令分类并不规范和完整，比如`call`,`ret`都可以算作无条件跳转指令，这里面是按照功能放在函数调用这一分类了。完整指令分类可以参加百度百科[汇编指令](https://baike.baidu.com/item/%E6%B1%87%E7%BC%96%E6%8C%87%E4%BB%A4)条目。
+
+
 
 ## 栈帧
 
@@ -306,7 +366,7 @@ CPU特权级别一般来说总共有4个，从最高特权的Ring 0到最低特�
 
 ![CPU rings](https://static.cyub.vip/images/202102/cpu_priv_rings.png)
 
-在Linux上用户态对应Ring 3，内核态对应Ring 0，当应用程序想要使用特权指令，控制中断、修改页表、访问设备等时候，应用程序就需要执行系统调用，完成CPU的运行级别会从Ring 3到Ring 0的切换，并跳转到系统调用对应的内核代码位置执行相关操作。
+在Linux上用户态对应Ring 3，内核态对应Ring 0，当应用程序想要使用特权指令，控制中断、修改页表、访问设备等时候，应用程序就需要执行系统调用，完成CPU的运行级别从Ring 3到Ring 0的切换，然后跳转到系统调用对应的内核代码位置执行相关操作。
 
  Linux 执行系统调用一共有三种方法：
 
@@ -376,20 +436,22 @@ Go 汇编还引入 4 个伪寄存器：
 - **FP**: Frame pointer: arguments and locals.
 
   - 使用形如 symbol+offset(FP) 的方式，引用函数的输入参数。例如 arg0+0(FP)，arg1+8(FP)
+  - offset是正值
 
 - **PC**: Program counter: jumps and branches.
 
-  PC寄存器，在 x86 平台下对应 ip 寄存器，amd64 上则是 rip
+  - PC寄存器，在 x86 平台下对应 ip 寄存器，amd64 上则是 rip
 
 - **SB**: Static base pointer: global symbols.
 
-  全局静态基指针，一般用来声明函数或全局变量
+  - 全局静态基指针，一般用来声明函数或全局变量
 
 - **SP**: Stack pointer: top of stack.
 
-  SP寄存器指向当前栈帧的局部变量的开始位置，使用形如 symbol+offset(SP) 的方式，引用函数的局部变量。offset 的合法取值是 [-framesize, 0)。
+  - SP寄存器指向当前栈帧的局部变量的开始位置，使用形如 symbol+offset(SP) 的方式，引用函数的局部变量。
+  - offset是负值，offset 的合法取值是 [-framesize, 0)。
 
-  手写汇编代码时，如果是 symbol+offset(SP) 形式，则表示伪寄存器 SP。如果是 offset(SP) 则表示硬件寄存器 SP。**对于编译输出(go tool compile -S / go tool objdump)的代码来讲，目前所有的 SP 都是硬件寄存器 SP，无论是否带 symbol**。
+  - 手写汇编代码时，如果是 symbol+offset(SP) 形式，则表示伪寄存器 SP。如果是 offset(SP) 则表示硬件寄存器 SP。**对于编译输出(go tool compile -S / go tool objdump)的代码来讲，目前所有的 SP 都是硬件寄存器 SP，无论是否带 symbol**。
 
 ### 函数声明
 
@@ -918,3 +980,5 @@ go build -gcflags="-N -l -S"  main.go
 - [为什么系统调用会消耗较多资源](https://draveness.me/whys-the-design-syscall-overhead/)
 - [x86 Assembly book](https://en.wikibooks.org/wiki/X86_Assembly#Table_of_Contents)
 - [LINUX SYSTEM CALL TABLE FOR X86 64](http://blog.rchapman.org/posts/Linux_System_Call_Table_for_x86_64/)
+- [Dropping down Go functions in assembly language](https://github.com/golang/go/files/447163/GoFunctionsInAssembly.pdf)
+- [A Readers Guide to x86 Assembly](https://cseweb.ucsd.edu/classes/sp10/cse141/pdf/02/S01_x86_64.key.pdf)
