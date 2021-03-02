@@ -6,13 +6,13 @@
 
 ```go
 type Map struct {
-    mu Mutex // 排他锁，用于对dirty map操作时候加锁处理
-    
-    read atomic.Value // read map
-    
+	mu Mutex // 排他锁，用于对dirty map操作时候加锁处理
+
+	read atomic.Value // read map
+
 	// dirty map。新增key时候，只写入dirty map中，需要使用mu
-    dirty map[interface{}]*entry
-    
+	dirty map[interface{}]*entry
+
 	// 用来记录从read map中读取key时miss的次数
 	misses int
 }
@@ -198,7 +198,7 @@ func (m *Map) Delete(key interface{}) {
 	if !ok && read.amended {
 		m.mu.Lock()
 		read, _ = m.read.Load().(readOnly)
-        e, ok = read.m[key]
+		e, ok = read.m[key]
 		// 若read map不存在该key，但dirty map中存在该key。则直接调用delete，删除dirty map中该key
 		if !ok && read.amended {
 			delete(m.dirty, key)
@@ -231,7 +231,7 @@ func (m *Map) Range(f func(key, value interface{}) bool) {
 	if read.amended { // 若dirty map中包含sync.Map中key时候
 		m.mu.Lock()
 		read, _ = m.read.Load().(readOnly)
-        if read.amended {// 加锁之后，再次判断，是为了防止并发调用Load方法时候，dirty map升级为read map时候，amended为false情况
+		if read.amended {// 加锁之后，再次判断，是为了防止并发调用Load方法时候，dirty map升级为read map时候，amended为false情况
 			// read.amended为true的时候，m.dirty包含sync.Map中所有的key
 			read = readOnly{m: m.dirty}
 			m.read.Store(read)
@@ -259,4 +259,4 @@ func (m *Map) Range(f func(key, value interface{}) bool) {
 - sync.Map采用空间换时间策略。其底层结构存在两个map，分别是read map和dirty map。当读取操作时候，优先从read map中读取，是不需要加锁的，若key不存在read map中时候，再从dirty map中读取，这个过程是加锁的。当新增key操作时候，只会将新增key添加到dirty map中，此操作是加锁的，但不会影响read map的读操作
 - 当sync.Map读取key操作时候，若从read map中一直未读到，若dirty map中存在read map中不存在的keys时，则会把dirty map升级为read map，这个过程是加锁的。这样下次读取时候只需要考虑从read map读取，且读取过程是无锁的
 - sync.Map中的dirty map要么是nil，要么包含read map中所有未删除的key-value
-- 相比于普通map加Mutex或者RWMutex的实现， sync.Map适用于读多写少场景，或者并发读写，但读写的key较少存在交集的场景。
+- sync.Map适用于读多写少场景

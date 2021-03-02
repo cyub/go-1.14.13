@@ -22,3 +22,4 @@ Golang版本是go1.14.13
 	- [ ] [逃逸分析](./notes/misc/escape-analysis.md)
 	- [x] [GDB使用](./notes/misc/gdb.md)
 	- [ ] [Function Value、闭包、方法](./notes/misc/function_closure_method.md)
+	- [x] [值传递、引用传递、值类型变量、引用类型变量](./notes/misc/pass_by_value.md)
