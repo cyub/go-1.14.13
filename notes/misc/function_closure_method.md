@@ -188,7 +188,7 @@ func main() {
     f1 := A.GetName // 方法表达式
     f1(a)
 
-    f2 := a.GetName // 方法接收者
+    f2 := a.GetName // 方法变量
     f2()
 }
 ```
