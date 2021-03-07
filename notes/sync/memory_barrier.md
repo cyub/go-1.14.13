@@ -1,8 +1,10 @@
 ## Cache Consistency
 
-![](https://static.cyub.vip/images/202103/memory_hierarchy.png)
+为了解决CPU与内存访问之间的巨大速度差异，在CPU中引入Cache系统，每个CPU核心都有自己独有的Cache，但这会造成同一个内存块，在多个CPU之间有多个备份，这就会造成访问数据的不一致。为了解决缓存不一致的情况，需要采用一致性协议`MESI`进行同步。
 
-为了解决CPU与内存访问的之间巨大速度差异，会在CPU中引入Cache系统，每个CPU都有自己独有的Cache，但这会造成同一个内存块，在多个CPU之间有多个备份，这就会造成访问数据的不一致。为了解决缓存不一致的情况，需要采用一致性协议MESI进行同步。
+为了解决`MESI`协议中，Shared或Invalidate状态下的`Cache line`需要等待其他CPU的invalidate acknowledge导致的不必要的等待，引入了`Store buffer`；为了解决CPU响应invalidate message不及时问题，引入了`Invalidate queue`。由于`Store buffer`和`Invalidate queue`的引入，所以最终的缓存架构如下：
+
+![](https://static.cyub.vip/images/202103/memory_arch.gif)
 
 ### MESI缓存一致性协议
 
@@ -164,10 +166,6 @@ smp_mb()指令可以迫使CPU在进行后续store操作前刷新store-buffer。�
 
 Invalidate queue用于缓存Shared->Invalid状态的指令，当cpu收到其它核心的RFO指令后，会将自身对应的cache line无效化，但是当核心比较忙的时候，无法立刻处理，所以引入Invalidate queue，当收到RFO指令后，立刻回应，将无效化的指令投入Invalidate queue。
 
-`Store buffer`和`Invalidate queue`的引入，最终现在操作系统的缓存架构如下：
-
-![](https://static.cyub.vip/images/202103/memory_arch.gif)
-
 上面`Store buffer`引入的问题2的示例中，并没有解决由于引入`Invalidate queue`导致的并发问题。我们需要在bar函数引入内存屏障，让所有无效指令都必须先执行（即数据a的无效指令一定要在读取a之前先执行)。
 
 ```c
@@ -198,7 +196,6 @@ void bar(void)
     assert(a == 1);
 }
 ```
-
 
 ## Memory Barrier
 
