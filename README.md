@@ -5,7 +5,7 @@ Golang版本是go1.14.13
 ## 目录
 
 - 运行流程
-	- [ ] [启动流程](./notes/bootstrap/load.md)
+	- [ ] [启动流程](./notes/bootstrap/bootstrap.md)
 - 堆栈
 	- [ ] [Goroutine栈设计](./notes/go-stack.md)
 - 错误处理
@@ -21,5 +21,6 @@ Golang版本是go1.14.13
 	- [x] [runtime hacking](./notes/misc/runtime.md)
 	- [ ] [逃逸分析](./notes/misc/escape-analysis.md)
 	- [x] [GDB使用](./notes/misc/gdb.md)
-	- [ ] [Function Value、闭包、方法](./notes/misc/function_closure_method.md)
+	- [ ] [Function Value、Closure、Method](./notes/misc/function_closure_method.md)
 	- [x] [值传递、引用传递、值类型变量、引用类型变量](./notes/misc/pass_by_value.md)
+	- [x] [缓存一致性、内存屏障、伪共享](./notes/sync/memory_barrier.md)
