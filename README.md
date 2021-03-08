@@ -13,15 +13,17 @@ Golang版本是go1.14.13
 - sync
 	- [x] [Map](./notes/sync/map.md)
 	- [x] [Waitgroup](./notes/sync/waitgroup.md)
+- 内存管理
+	- [ ] [内存分配管理](./notes/memory/memory_allocator.md)
+	- [ ] [逃逸分析](./notes/misc/escape-analysis.md)
 - slice
 	- [ ] [slice](./notes/slice/slice.md)
 - misc
 	- [x] [no copy机制](./notes/misc/nocopy.md)
 	- [x] [Go汇编](./notes/misc/assembly.md)
 	- [x] [runtime hacking](./notes/misc/runtime.md)
-	- [ ] [逃逸分析](./notes/misc/escape-analysis.md)
 	- [x] [GDB使用](./notes/misc/gdb.md)
-	- [ ] [Function Value、Closure、Method](./notes/misc/function_closure_method.md)
+	- [x] [Function Value、Closure、Method](./notes/misc/function_closure_method.md)
 	- [x] [值传递、引用传递、值类型变量、引用类型变量](./notes/misc/pass_by_value.md)
 	- [x] [缓存一致性、内存屏障、伪共享](./notes/sync/memory_barrier.md)
 	- [x] [同步机制](./notes/sync/method.md)
