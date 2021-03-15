@@ -19,6 +19,7 @@ Golang版本是go1.14.13
 - slice
 	- [ ] [slice](./notes/slice/slice.md)
 - [channel](./notes/channel/channel.md)
+- [type](./notes/type/type.md)
 - misc
 	- [x] [no copy机制](./notes/misc/nocopy.md)
 	- [x] [Go汇编](./notes/misc/assembly.md)
