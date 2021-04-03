@@ -168,7 +168,9 @@ TEXT ·StoreUintptr(SB),NOSPLIT,$0
 	JMP	runtime∕internal∕atomic·Storeuintptr(SB)
 ```
 
-从上面汇编代码可以看出来atomic操作通过JMP操作跳到`runtime/internal/atomic`目录下面的汇编实现。我们把目标转移到`runtime/internal/atomic`目录下面。该目录包含针对不同平台的atomic汇编实现`asm_xxx.s`。这里面我们只关注`amd64`平台`asm_amd64.s`([runtime/internal/atomic/asm_amd64.s](https://github.com/cyub/go-1.14.13/tree/master/src/runtime/internal/atomic/asm_amd64.s))和`atomic_amd64.go`([runtime/internal/atomic/atomic_amd64.go](https://github.com/cyub/go-1.14.13/tree/master/src/runtime/internal/atomic/atomic_amd64.go))。
+从上面汇编代码可以看出来atomic操作通过JMP操作跳到`runtime/internal/atomic`目录下面的汇编实现。我们把目标转移到`runtime/internal/atomic`目录下面。
+
+该目录包含针对不同平台的atomic汇编实现`asm_xxx.s`。这里面我们只关注`amd64`平台`asm_amd64.s`([runtime/internal/atomic/asm_amd64.s](https://github.com/cyub/go-1.14.13/tree/master/src/runtime/internal/atomic/asm_amd64.s))和`atomic_amd64.go`([runtime/internal/atomic/atomic_amd64.go](https://github.com/cyub/go-1.14.13/tree/master/src/runtime/internal/atomic/atomic_amd64.go))。
 
 函数  | 底层实现
 --- | ---
@@ -231,7 +233,7 @@ TEXT runtime∕internal∕atomic·Store64(SB), NOSPLIT, $0-16
 	RET
 ```
 
-XCHGQ指令是交换指令，用于交换源操作数和目的操作数。
+**XCHGQ**指令是交换指令，用于交换源操作数和目的操作数。
 
 `StoreInt32`、`StoreUint32`是由`runtime∕internal∕atomic·Store`方法实现，与`runtime∕internal∕atomic·Store64`逻辑一样，这里不在赘述。
 
@@ -297,3 +299,120 @@ func Load64(ptr *uint64) uint64 {
 }
 ```
 
+最后我们来分析atomic.Value类型提供Load/Store操作。
+
+### atomic.Value类型的Load/Store操作
+
+atomic.Value类型定义如下：
+```go
+type Value struct {
+	v interface{}
+}
+
+ // ifaceWords是空接口底层表示
+type ifaceWords struct {
+	typ  unsafe.Pointer
+	data unsafe.Pointer
+}
+```
+
+atomic.Value底层存储的是空接口类型，空接口底层结构如下：
+
+```go
+type eface struct {
+	_type *_type // 空接口持有的类型
+	data  unsafe.Pointer // 指向空接口持有类型变量的指针
+}
+```
+
+atomic.Value内存布局如下所示：
+
+![](https://static.cyub.vip/images/202104/atomic_value_mem_layout.png)
+
+从上图可以看出来atomic.Value内部分为两部分，第一个部分是_type类型指针，第二个部分是unsafe.Pointer类型，两个部分大小都是8字节（64系统下）。我们可以通过以下代码进行测试：
+
+```go
+type Value struct {
+	v interface{}
+}
+
+type ifaceWords struct {
+	typ  unsafe.Pointer
+	data unsafe.Pointer
+}
+
+func main() {
+	func main() {
+	val := Value{v: 123456}
+	t := (*ifaceWords)(unsafe.Pointer(&val))
+	dp := (*t).data            // dp是非安全指针类型变量
+	fmt.Println(*((*int)(dp))) // 输出123456
+
+	var val2 Value
+	t = (*ifaceWords)(unsafe.Pointer(&val2))
+	fmt.Println(t.typ) // 输出nil
+}
+```
+
+接下来我们看下Store方法：
+```go
+func (v *Value) Store(x interface{}) {
+	if x == nil { // atomic.Value类型变量不能是nil
+		panic("sync/atomic: store of nil value into Value")
+	}
+	vp := (*ifaceWords)(unsafe.Pointer(v)) // 将指向atomic.Value类型指针转换成*ifaceWords类型
+	xp := (*ifaceWords)(unsafe.Pointer(&x)) // xp是*faceWords类型指针，指向传入参数x
+	for {
+		typ := LoadPointer(&vp.typ) // 原子性返回vp.typ
+		if typ == nil { // 第一次调用Store时候，atomic.Value底层结构体第一部分是nil，
+		// 我们可以从上面测试代码可以看出来
+			runtime_procPin() // pin process处理，防止M被抢占
+			if !CompareAndSwapPointer(&vp.typ, nil, unsafe.Pointer(^uintptr(0))) { // 通过cas操作，将atomic.Value的第一部分存储为unsafe.Pointer(^uintptr(0))，若没操作成功，继续操作
+				runtime_procUnpin() // unpin process处理，释放对当前M的锁定
+				continue
+			}
+
+			// vp.data == xp.data
+			// vp.typ == xp.typ
+			StorePointer(&vp.data, xp.data)
+			StorePointer(&vp.typ, xp.typ)
+			runtime_procUnpin()
+			return
+		}
+		if uintptr(typ) == ^uintptr(0) { // 此时说明第一次的Store操作未完成，正在处理中，此时其他的Store等待第一次操作完成
+			continue
+		}
+
+		if typ != xp.typ { // 再次Store操作时进行typ类型校验，确保每次Store数据对象都必须是同一类型
+			panic("sync/atomic: store of inconsistently typed value into Value")
+		}
+		StorePointer(&vp.data, xp.data) // vp.data == xp.data
+		return
+	}
+}
+```
+
+总结上面Store流程：
+
+1. 每次调用Store方法时候，会将传入参数转换成interface{}类型。当第一次调用Store方法时候，分两部分操作，分别将传入参数空接口类型的_typ和data，存储到Value类型中。
+2. 当再次调用Store类型时候，进行传入参数空接口类型的_type和Value的_type比较，若不一致直接panic，若一致则将data存储到Value类型中
+
+从流程2可以看出来，**每次调用Store方法时传入参数都必须是同一类型的变量**。当Store完成之后，实现了“鸠占鹊巢”，atomic.Value底层存储的实际上是(interface{})x。
+
+最后我们看看atomic.Value的Load操作：
+
+```go
+func (v *Value) Load() (x interface{}) {
+	vp := (*ifaceWords)(unsafe.Pointer(v)) // 将指向v指针转换成*ifaceWords类型
+	typ := LoadPointer(&vp.typ)
+	if typ == nil || uintptr(typ) == ^uintptr(0) { // typ == nil 说明Store方法未调用过
+	// uintptr(typ) == ^uintptr(0) 说明第一Store方法调用正在进行中
+		return nil
+	}
+	data := LoadPointer(&vp.data)
+	xp := (*ifaceWords)(unsafe.Pointer(&x))
+	xp.typ = typ
+	xp.data = data
+	return
+}
+```

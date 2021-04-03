@@ -13,7 +13,11 @@ Golang版本是go1.14.13
 - sync
 	- [x] [Map](./notes/sync/map.md)
 	- [x] [Waitgroup](./notes/sync/waitgroup.md)
-	- [ ] [atomic](./notes/sync/atomic.md)
+	- [x] [atomic](./notes/sync/atomic.md)
+	- [x] [Once](./notes/sync/once.md)
+	- [ ] [Pool](./notes/sync/pool.md)
+	- [ ] [Mutex](./notes/sync/mutex.md)
+	- [ ] [Cond](./notes/sync/cond.md)
 	- [x] [同步机制](./notes/sync/method.md)
 - 内存管理
 	- [ ] [内存分配管理](./notes/memory/memory_allocator.md)
