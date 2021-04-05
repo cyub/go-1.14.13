@@ -35,6 +35,7 @@ Golang版本是go1.14.13
 	- [ ] [reflect](./notes/type/reflect.md)
 	- [x] [Function Value、Closure、Method](./notes/misc/function_closure_method.md)
 	- [x] [值传递、引用传递、值类型变量、引用类型变量](./notes/misc/pass_by_value.md)
+	- [x] [unsafe](./notes/type/unsafe.md)
 - [x] [context](./notes/context/context.md)
 - [ ] [syscall](./notes/syscall/syscall.md)
 - misc
