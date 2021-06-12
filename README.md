@@ -29,6 +29,8 @@ Golang版本是go1.14.13
 - channel
 	- [x] [channel](./notes/channel/channel.md)
 	- [ ] [select选择器](./notes/channel/select.md)
+- map
+	- [ ] [map](./notes/map/map.md)
 - type system
 	- [ ] [type system](./notes/type/type.md)
 	- [ ] [interface](./notes/type/interface.md)
@@ -36,6 +38,10 @@ Golang版本是go1.14.13
 	- [x] [Function Value、Closure、Method](./notes/misc/function_closure_method.md)
 	- [x] [值传递、引用传递、值类型变量、引用类型变量](./notes/misc/pass_by_value.md)
 	- [x] [unsafe](./notes/type/unsafe.md)
+	- [ ] [函数是一等公民](./note/type/first_class.md)
+	- [ ] [字符串](./note/type/string.md)
+	- [ ] [数组](./note/type/array.md)
+	- [ ] [切片](./note/type/slice.md)
 - [x] [context](./notes/context/context.md)
 - [ ] [syscall](./notes/syscall/syscall.md)
 - misc
