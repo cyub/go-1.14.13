@@ -51,11 +51,15 @@ type bmap struct{
 	tophash [8]uint8
 	keys [8]keytype
 	values [8]elemtype
-	overflow uintptr
+	overflow *bmap
 }
 ```
 
-每个桶bmap中可以装载8个key-value键值对。当一个key确定存储在哪个桶之后，还需要确定具体存储在桶的哪个位置（这个位置也称为桶单元，装载8个key-value键值对，那么一个桶共8个桶单元），bmap中tophash就是用于完成这个工作的，实现快速定位key的位置。在实现过程中会使用key的hash值的高八位作为tophash值，存放在bmap的tophash字段中。tophash计算公式如下：
+bmap结构示意图：
+
+![](https://static.cyub.vip/images/202106/map_bmap.png)
+
+每个桶bmap中可以装载8个key-value键值对。当一个key确定存储在哪个桶之后，还需要确定具体存储在桶的哪个位置（这个位置也称为桶单元，一个bmap装载8个key-value键值对，那么一个bmap共8个桶单元），bmap中tophash就是用于实现快速定位key的位置。在实现过程中会使用key的hash值的高八位作为tophash值，存放在bmap的tophash字段中。tophash计算公式如下：
 
 ```go
 func tophash(hash uintptr) uint8 {
@@ -67,7 +71,9 @@ func tophash(hash uintptr) uint8 {
 }
 ```
 
-上面函数中hash是64位的，sys.PtrSize值是8，所以`top := uint8(hash >> (sys.PtrSize*8 - 8))`等效`top = uint8(hash >> 56)`，最后top取出来的值就是hash的最高8位值。bmap的tophash字段不光存储key哈希值的高八位，还会存储一些状态值，用来表明当前桶单元状态，这些状态值都是小于minTopHash的。为了避免key哈希值的高八位值出现这些状态值相等产生混淆情况，所以当key哈希值高八位若小于minTopHash时候，自动将其值加上minTopHash作为该key的tophash。桶单元的状态值如下：
+上面函数中hash是64位的，sys.PtrSize值是8，所以`top := uint8(hash >> (sys.PtrSize*8 - 8))`等效`top = uint8(hash >> 56)`，最后top取出来的值就是hash的最高8位值。bmap的tophash字段不光存储key哈希值的高八位，还会存储一些状态值，用来表明当前桶单元状态，这些状态值都是小于minTopHash的。
+
+为了避免key哈希值的高八位值出现这些状态值相等产生混淆情况，所以当key哈希值高八位若小于minTopHash时候，自动将其值加上minTopHash作为该key的tophash。桶单元的状态值如下：
 
 ```go
 emptyRest      = 0 // 表明此桶单元为空，且更高索引的单元也是空
@@ -77,6 +83,12 @@ evacuatedY     = 3 // 用于表示扩容迁移到新桶后半段区间
 evacuatedEmpty = 4 // 用于表示此单元已迁移
 minTopHash     = 5 // key的tophash值与桶状态值分割线值，小于此值的一定代表着桶单元的状态，大于此值的一定是key对应的tophash值
 ```
+
+emptyRest和emptyOne状态都表示此桶单元为空，都可以用来插入数据。但是emptyRest还代表着更高单元也为空，那么遍历寻找key的时候，当遇到当前单元值为emptyRest时候，那么更高单元无需继续遍历。
+
+下图中桶单元1的tophash值是emptyOne，桶单元3的tophash值是emptyRest，那么我们一定可以推断出桶单元3以上都是emptyRest状态。
+
+![](https://static.cyub.vip/images/202106/map_tophash.png)
 
 bmap中可以装载8个key-value，这8个key-value并不是按照key1/value1/key2/value2/key3/value3...这样形式存储，而采用key1/key2../key8/value1/../value8形式存储，因为第二种形式可以减少padding，源码中以map[int64]int8举例说明。
 
@@ -145,9 +157,9 @@ makemap函数的第一个参数是maptype类指针，它描述了创建的map中
 
 `overLoadFactor`函数用来判断当前映射的加载因子是否超过加载因子阈值。`makemap`使用`overLoadFactor`函数来调整B值。
 
-加载因子描述了哈希表中元素填满程度，加载因子越大，表明哈希表中元素越多，空间利用率高，但是这也意味着冲突的机会就会加大。当哈希表中所有桶已写满情况下，加载因子就是1，此时再写入新key一定会产生冲突碰撞。为了提高哈希表写入效率就必须在加载因子超过一定值时（这个值称为加载因子阈值），进行rehash操作，将桶容量进行扩容，来尽量避免出现冲突情况。
+**加载因子**描述了哈希表中元素填满程度，加载因子越大，表明哈希表中元素越多，空间利用率高，但是这也意味着冲突的机会就会加大。当哈希表中所有桶已写满情况下，加载因子就是1，此时再写入新key一定会产生冲突碰撞。为了提高哈希表写入效率就必须在加载因子超过一定值时（这个值称为加载因子阈值），进行rehash操作，将桶容量进行扩容，来尽量避免出现冲突情况。
 
-Java中hashmap的默认加载因子阈值是0.75，Go语言中映射的加载因子阈值是6.5。为什么Go映射的加载因子阈值不是0.75，而且超过了1，这是因为Go映射中每个桶可以存8个key-value，而Java中哈希表都是存放一个key-value，其满载因子是1，而Go则是8。
+Java中hashmap的默认加载因子阈值是0.75，Go语言中映射的加载因子阈值是6.5。为什么Go映射的加载因子阈值不是0.75，而且超过了1？这是因为Java中哈希表的桶存放的是一个key-value，其满载因子是1，Go映射中每个桶可以存8个key-value，满载因子是8，当加载因子阈值为6.5时候空间利用率和写入性能达到最佳平衡。
 
 ```go
 func overLoadFactor(count int, B uint8) bool {
@@ -164,7 +176,7 @@ func bucketShift(b uint8) uintptr {
 }
 ```
 
-`makeBucketArray`函数是用来创建array，来用作为map的buckets。对于创建时指定元素大小超过(2^4) * 8时候，除了创建map的buckets，也会提前分配好一些桶作为溢出桶。buckets和溢出桶，在内存上是连续的。为啥提前分配好溢出桶，而不是在溢出时候，再分配，这是因为现在分配，是直接申请一大片内存，效率更高。
+`makeBucketArray`函数是用来创建bmap array，来用作为map的buckets。对于创建时指定元素大小超过(2^4) * 8时候，除了创建map的buckets，也会提前分配好一些桶作为溢出桶。buckets和溢出桶，在内存上是连续的。为啥提前分配好溢出桶，而不是在溢出时候，再分配，这是因为现在分配是直接申请一大片内存，效率更高。
 
 hamp.extra.nextOverflow指向该溢出桶，溢出桶的除了最后一个桶的overflow指向map的buckets，其他桶的overflow指向nil，这是用来判断溢出桶最后边界，后面代码有涉及此处逻辑。
 
@@ -223,6 +235,7 @@ func makeBucketArray(t *maptype, b uint8, dirtyalloc unsafe.Pointer) (buckets un
 4. 根据步骤3取到的值，计算该值的hash，再次比较，若相等则定位成功。否则重复步骤3去`bmap.overflow`中继续查找。
 5. 若`bmap.overflow`链表都找个遍都没有找到，则返回nil。
 
+![](https://static.cyub.vip/images/202106/map_access.png)
 
 当m为2的x幂时候，n对m取余数存在以下等式：
 
@@ -254,7 +267,18 @@ v := a["x"]
 v, ok := a["x"]
 ```
 
-为了优化性能，Go编译器会根据key类型采用不同底层函数，比如对于key类型是int的，底层实现是mapaccess1_fast64。具体文件可以查看runtime/map_fastxxx.go。这里面我们这分析通用的mapaccess1函数。
+为了优化性能，Go编译器会根据key类型采用不同底层函数，比如对于key类型是int的，底层实现是mapaccess1_fast64。具体文件可以查看runtime/map_fastxxx.go。优化版本函数有：
+
+key 类型 | 方法
+---- | ----
+uint64 | func mapaccess1_fast64(t *maptype, h *hmap, key uint64) unsafe.Pointer
+uint64 | func mapaccess2_fast64(t *maptype, h *hmap, key uint64) (unsafe.Pointer, bool)
+uint32 | func mapaccess1_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer
+uint32 | func mapaccess2_fast32(t *maptype, h *hmap, key uint32) (unsafe.Pointer, bool)
+string | func mapaccess1_faststr(t *maptype, h *hmap, ky string) unsafe.Pointer
+string | func mapaccess2_faststr(t *maptype, h *hmap, ky string) (unsafe.Pointer, bool)
+
+这里面我们这分析通用的mapaccess1函数。
 
 ```go
 func mapaccess1(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer {
@@ -317,9 +341,9 @@ key 类型 | 方法
 ---- | ----
 uint64 | func mapassign_fast64(t *maptype, h *hmap, key uint64) unsafe.Pointer
 unsafe.Pointer | func mapassign_fast64ptr(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer
-string | func mapassign_faststr(t *maptype, h *hmap, s string) unsafe.Pointer
 uint32 | func mapassign_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer
 unsafe.Pointer | func mapassign_fast32ptr(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer
+string | func mapassign_faststr(t *maptype, h *hmap, s string) unsafe.Pointer
 
 
 这里面我们只分析通用的方法mapassign：
@@ -509,4 +533,151 @@ func (h *hmap) incrnoverflow() {
 }
 ```
 
+## 映射的删除操作
+
+在map中删除key-value时候，都会调用`runtime.mapdelete`方法，同访问操作一样，Go编译器针对不同类型的key，会采用优化版本函数：
+
+key 类型 | 方法
+---- | ----
+uint64 | func mapdelete_fast64(t *maptype, h *hmap, key uint64)
+uint32 | func mapdelete_fast32(t *maptype, h *hmap, key uint32)
+string | func mapdelete_faststr(t *maptype, h *hmap, ky string)
+
+
+这里面我们只大概分析通用删除操作mapdelete函数：
+
+**删除map中元素时候并不会释放内存**。删除时候，会清空映射中相应位置的key和value数据，并将对应的tophash置为emptyOne。此外会检查当前单元旁边单元的状态是否也是空状态，如果也是空状态，那么会将当前单元和旁边空单元状态都改成emptyRest。
+
+```go
+func mapdelete(t *maptype, h *hmap, key unsafe.Pointer) {
+	if h == nil || h.count == 0 { // 对nil map或者数量为0的map进行删除
+		if t.hashMightPanic() {
+			t.hasher(key, 0) // see issue 23734
+		}
+		return
+	}
+	if h.flags&hashWriting != 0 { // 有其他Goroutine正在写操作，则直接panic
+		throw("concurrent map writes")
+	}
+
+	hash := t.hasher(key, uintptr(h.hash0))
+	h.flags ^= hashWriting // 将写标志置为1，删除操作也是一种写操作
+
+	bucket := hash & bucketMask(h.B)
+	if h.growing() {
+		growWork(t, h, bucket)
+	}
+	b := (*bmap)(add(h.buckets, bucket*uintptr(t.bucketsize)))
+	bOrig := b
+	top := tophash(hash)
+search:
+	for ; b != nil; b = b.overflow(t) {
+		for i := uintptr(0); i < bucketCnt; i++ {
+			if b.tophash[i] != top {
+				if b.tophash[i] == emptyRest {
+					break search
+				}
+				continue
+			}
+			k := add(unsafe.Pointer(b), dataOffset+i*uintptr(t.keysize))
+			k2 := k
+			if t.indirectkey() {
+				k2 = *((*unsafe.Pointer)(k2))
+			}
+			if !t.key.equal(key, k2) {
+				continue
+			}
+			
+			// 清空key
+			if t.indirectkey() {
+				*(*unsafe.Pointer)(k) = nil
+			} else if t.key.ptrdata != 0 {
+				memclrHasPointers(k, t.key.size)
+			}
+			// 清空value
+			e := add(unsafe.Pointer(b), dataOffset+bucketCnt*uintptr(t.keysize)+i*uintptr(t.elemsize))
+			if t.indirectelem() {
+				*(*unsafe.Pointer)(e) = nil
+			} else if t.elem.ptrdata != 0 {
+				memclrHasPointers(e, t.elem.size)
+			} else {
+				memclrNoHeapPointers(e, t.elem.size)
+			}
+			b.tophash[i] = emptyOne // 将tophash置为emptyOne
+			
+			// 下面代码是将当前单元附近的emptyOne状态的单元都改成emptyRest状态
+			if i == bucketCnt-1 {
+				if b.overflow(t) != nil && b.overflow(t).tophash[0] != emptyRest {
+					goto notLast
+				}
+			} else {
+				if b.tophash[i+1] != emptyRest {
+					goto notLast
+				}
+			}
+			for {
+				b.tophash[i] = emptyRest
+				if i == 0 {
+					if b == bOrig {
+						break
+					}
+					c := b
+					for b = bOrig; b.overflow(t) != c; b = b.overflow(t) {
+					}
+					i = bucketCnt - 1
+				} else {
+					i--
+				}
+				if b.tophash[i] != emptyOne {
+					break
+				}
+			}
+		notLast:
+			h.count--
+			break search
+		}
+	}
+
+	if h.flags&hashWriting == 0 {
+		throw("concurrent map writes")
+	}
+	h.flags &^= hashWriting
+}
+```
+
 ## 扩容方式
+
+Go语言中映射扩容采用渐进式扩容，避免一次性迁移数据过多造成性能问题。当对映射进行新增、更新时候会触发扩容操作然后进行扩容操作（删除操作只会进行扩容操作，不会进行触发扩容操作），每次最多迁移2个bucket。扩容方式有两种类型：
+
+1. 等容量扩容
+2. 双倍容量扩容
+
+### 等容量扩容
+
+当对一个map不停进行新增和删除操作时候，会创建了很多溢出桶，而加载因子没有超过阈值不会发生双倍容量扩容，这些桶利用率很低，就会导致查询效率变慢。这时候就需要采用等容量扩容，使用桶中数据更紧凑，减少溢出桶数量，从而提高查询效率。**等容量扩容的条件是在未达到加载因子阈值情况下，如果B小于15时，溢出桶的数量大于2^B，B大于等于15时候，溢出桶数量大于2^15时候**会进行等容量扩容操作：
+
+```go
+func tooManyOverflowBuckets(noverflow uint16, B uint8) bool {
+	if B > 15 {
+		B = 15
+	}
+	return noverflow >= uint16(1)<<(B&15)
+}
+```
+
+### 双倍容量扩容
+
+双倍容量扩容指的是桶的数量变成旧桶数量的2倍。当映射的负载因子超过阈值时候，会触发双倍容量扩容。
+
+```go
+func overLoadFactor(count int, B uint8) bool {
+	return count > bucketCnt && uintptr(count) > loadFactorNum*(bucketShift(B)/loadFactorDen)
+}
+```
+
+不论是等容量扩容，还是双倍容量扩容，都会新创建一个buckets，然后将hmap.buckets指向这个新的buckets，hmap.oldbuckets指向旧的buckets。
+
+
+## 进一步阅读
+
+- [深度解密Go语言之map](https://www.cnblogs.com/qcrao-2018/p/10903807.html)
