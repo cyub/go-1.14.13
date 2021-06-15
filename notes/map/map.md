@@ -49,9 +49,9 @@ type bmap struct {
 ```go
 type bmap struct{
 	tophash [8]uint8
-	keys [8]keytype
-	values [8]elemtype
-	overflow *bmap
+	keys [8]keytype // keytype 由编译器编译时候确定
+	values [8]elemtype // elemtype 由编译器编译时候确定
+	overflow uintptr // overflow指向下一个bmap，overflow是uintptr而不是*bmap类型，是为了减少gc
 }
 ```
 
@@ -97,13 +97,16 @@ hmap中extra字段是`runtime.mapextra`类型，用来记录额外信息：
 ```go
 // mapextra holds fields that are not present on all maps.
 type mapextra struct {
-	overflow    *[]*bmap
-	oldoverflow *[]*bmap
+	overflow    *[]*bmap // 指向overflow桶指针组成的切片，防止这些溢出桶被gc了
+	oldoverflow *[]*bmap // 扩容时候，指向旧的溢出桶组成的切片，防止这些溢出桶被gc了
+
 
 	//指向下一个可用的overflow 桶
 	nextOverflow *bmap
 }
 ```
+
+当映射的key和value都不是指针类型时候，bmap将完全不包含指针，那么gc时候就不用扫描bmap。bmap指向溢出桶的字段overflow是uintptr类型，为了防止这些overflow桶被gc掉，所以需要mapextra.overflow将它保存起来。如果bmap的overflow是*bmap类型，那么gc扫描的是一个个拉链表，效率明显不如直接扫描一段内存(hmap.mapextra.overflow)
 
 ## 映射的创建
 
