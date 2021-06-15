@@ -95,3 +95,72 @@ BenchmarkWithoutPool-8              3404            314232 ns/op          160001
 BenchmarkWithPool-8                 5870            220399 ns/op               0 B/op          0 allocs/op
 ```
 从上面基准测试中，我们可以看到使用sync.Pool之后，执行耗时降低了29.8%。
+
+## 数据结构
+
+![](https://static.cyub.vip/images/202106/pool.png)
+
+sync.Pool底层数据结构体是Pool结构体([sync/pool.go](https://github.com/golang/go/blob/go1.14.13/src/sync/pool.go#L44-L57))：
+
+```go
+type Pool struct {
+	noCopy noCopy // nocopy机制，用于go vet命令检查是否复制后使用
+
+	local     unsafe.Pointer // 指向[P]poolLocal数组，P数量等于runtime.GOMAXPROCS(0)
+	localSize uintptr        // local数组大小，即[P]poolLocal大小
+
+	victim     unsafe.Pointer // 指向上一个gc循环前的local
+	victimSize uintptr        // victims数组大小
+
+	New func() interface{} // 创建临时对象的方法，当从local数组和victim数组没有找到临时对象缓存，那么会调用此方法现场创建一个
+}
+```
+
+Pool.local指向大小为`runtime.GOMAXPROCS(0)`的poolLocal数组。poolLocal结构如下：
+
+```go
+type poolLocal struct {
+	poolLocalInternal // 内嵌poolLocalInternal结构体，
+	// 为啥不直接把所有poolLocalInternal字段写到poolLocal里面，这是为了好计算出pad大小
+
+	// 进行一些padding，阻止false share
+	pad [128 - unsafe.Sizeof(poolLocalInternal{})%128]byte
+}
+
+type poolLocalInternal struct {
+	private interface{} // 私有属性，快速存取临时对象
+	shared  poolChain   // shared是一个双端链表，本地P能够pushHead/popHead，任意P都能够popTail.
+}
+```
+
+poolChain结构如下：
+
+```go
+type poolChain struct {
+	// 指向双向链表头
+	head *poolChainElt
+
+	// 指向双向链表尾
+	tail *poolChainElt
+}
+
+type poolChainElt struct {
+	poolDequeue
+	next, prev *poolChainElt
+}
+
+type poolDequeue struct {
+	// headTail高32位是循环队列的head
+	// headTail低32位是循环队列的tail
+	// [tail, head)范围是队列所有元素
+	headTail uint64
+
+	vals []eface // 用于存放临时对象，大小是2的倍数，最小大小是8
+}
+
+type eface struct {
+	typ, val unsafe.Pointer
+}
+```
+
+`poolLocalInternal`的shared字段指向是一个双向链表(doubly-linked list)，链表每一个元素都是poolChainElt类型，poolChainElt是一个双端队列（Double-ended Queue简写deque），并且链表中每一个元素的队列大小是2的倍数，且是前一个元素队列大小的2倍。poolChainElt是基于环形队列(circular queue)实现的双端队列。
