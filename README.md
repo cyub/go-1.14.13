@@ -49,3 +49,4 @@ Golang版本是go1.14.13
 	- [x] [Go汇编](./notes/misc/assembly.md)
 	- [x] [runtime hacking](./notes/misc/runtime.md)
 	- [x] [GDB使用](./notes/misc/gdb.md)
+	- [x] [CPU亲和性](./notes/misc/cpu_affinity.md)
