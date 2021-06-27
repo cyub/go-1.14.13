@@ -10,7 +10,7 @@
 
 sync.Pool提供了临时对象缓存池，存在池子的对象可能在任何时刻被自动移除，我们对此不能做任何预期。sync.Pool**可以并发使用**，它通过**复用对象来减少对象内存分配和GC的压力**。当负载大的时候，临时对象缓存池会扩大，**缓存池中的对象会在每2个GC循环中清除**。
 
-sync.Pool拥有两个对象存储容器：`local pool`和`victim cache`，当获取对象时，优先从`victvim cache`中检索，若未找到则再从`local pool`中检索，若也未获取到，则调用New方法创建一个对象返回。当对象放回sync.Pool时候，会放在`local pool`中。当GC开始时候，首选将`victim cache`中所有对象清除，然后将`local pool`容器中所有对象都会移动到`victim cache`中，所以说缓存池中的对象会在每2个GC循环中清除。
+sync.Pool拥有两个对象存储容器：`local pool`和`victim cache`。`local pool`与`victim cache`相似，相当于`primary cache`。当获取对象时，优先从`local pool`中查找，若未找到则再从`victim cache`中查找，若也未获取到，则调用New方法创建一个对象返回。当对象放回sync.Pool时候，会放在`local pool`中。当GC开始时候，首选将`victim cache`中所有对象清除，然后将`local pool`容器中所有对象都会移动到`victim cache`中，所以说缓存池中的对象会在每2个GC循环中清除。
 
 `victim cache`是从CPU缓存中借鉴的概念：
 
@@ -448,8 +448,8 @@ func storePoolChainElt(pp **poolChainElt, v *poolChainElt) {
 
 总结下从`local pool`流程是：
 1. 首先从当前P的localPool的私有属性private上取
-2. 若未取到，则从localPool的由队列组成的双向链表上去，方向是从头部节点队列开始，依次往上查找
-3. 如果当前P的localPool中没有取到，则尝试从其他P的localPool偷一个，方向是从尾部节点队列开始，依次向下查找，若当前节点为空，会把当前节点从链表中删掉。
+2. 若未取到，则从localPool中由队列组成的双向链表上取，**方向是从头部节点队列开始，依次往上查找**
+3. 如果当前P的localPool中没有取到，则尝试从其他P的localPool偷一个，**方向是从尾部节点队列开始，依次向下查找**，若当前节点为空，会把当前节点从链表中删掉。
 
 ## Put操作
 
@@ -515,11 +515,227 @@ func (c *poolChain) pushHead(val interface{}) {
 }
 ```
 
-从上面代码可以看到，创建的双向链表第一个节点队列的大小为8，第二个节点队列大小为16，第三个节点队列大小为32，依次类推，最大为dequeueLimit。每个节点队列的大小都是2的n次幂，这是因为队列使用环形队列结构实现的，底层是数组，同前面介绍的映射一样，定位位置是时候取余运算可以改成与运算，更高效。
+从上面代码可以看到，创建的双向链表第一个节点队列的大小为8，第二个节点队列大小为16，第三个节点队列大小为32，依次类推，最大为dequeueLimit。每个节点队列的大小都是2的n次幂，这是因为队列使用环形队列结构实现的，底层是数组，同前面介绍的映射一样，定位位置时候取余运算可以改成与运算，更高效。
 
 我们画出双向链表中头部节点队列未满和已满两种情况下示意图：
 
 ![](https://static.cyub.vip/images/202106/pool_queue_push.png)
+
+## 双端队列 - poolDequeue
+
+从上面Get操作和Put操作中，我们可以看到都是对poolChain操作，poolChain操作最终都是对双端队列poolDequeue的操作，Get操作对应poolDequeue的popHead和popTail, Put操作对应poolDequeue的pushHead。
+
+再看一下poolDequeue结构体定义：
+
+```go
+type poolDequeue struct {
+	headTail uint64
+	vals []eface
+}
+
+type eface struct {
+	typ, val unsafe.Pointer
+}
+
+type dequeueNil *struct{}
+```
+
+`poolDequeue`是一个无锁的（lock-free)、固定大小的（fixed-size) 单一生产者(single-producer),多消费者（multi-consumer）队列。单一生产者可以从队列头部push和pop元素，消费者可以从队列尾部pop元素。`poolDequeue`是基于环形队列实现的双端队列。所谓**双端队列（double-ended queue，双端队列，简写deque）是一种具有队列和栈的性质的数据结构。双端队列中的元素可以从两端弹出，其限定插入和删除操作在表的两端进行**。`poolDequeue`支持在两端删除操作，只支持在head端插入。
+
+`poolDequeue`的headTail字段是由环形队列的head索引（即rear索引）和tail索引（即front索引）打包而来，headTail是64位无符号整形，其高32位是head索引，低32位是tail索引：
+
+![环形队列head和tail索引](https://static.cyub.vip/images/202106/pool_queue_head_tail.png)
+
+```go
+const dequeueBits = 32
+
+func (d *poolDequeue) unpack(ptrs uint64) (head, tail uint32) {
+	const mask = 1<<dequeueBits - 1
+	head = uint32((ptrs >> dequeueBits) & mask)
+	tail = uint32(ptrs & mask)
+	return
+}
+
+func (d *poolDequeue) pack(head, tail uint32) uint64 {
+	const mask = 1<<dequeueBits - 1
+	return (uint64(head) << dequeueBits) |
+		uint64(tail&mask)
+}
+```
+
+head索引指向的是环形队列中下一个需要填充的槽位，即新入队元素将会写入的位置，tail索引指向的是环形队列中最早入队元素位置。环形队列中元素位置范围是[tail, head)。
+
+我们知道环形队列中，为了解决`head == tail`即可能是队列为空，也可能是队列空间全部占满的二义性，有两种解决办法：1. 空余单元法， 2. 记录队列元素个数法。
+
+采用空余单元法时，队列中永远有一个元素空间不使用，即队列中元素个数最多有QueueSize -1个。此时队列为空和占满的判断条件如下：
+
+```
+head == tail // 队列为空
+(head + 1)%QueueSize == tail // 队列已满
+```
+![循环队列之空余单元法](https://static.cyub.vip/images/202106/circular_queue.png)
+
+
+而`poolDequeue`采用的是记录队列中元素个数法，相比空余单元法好处就是不会浪费一个队列元素空间。后面章节讲到的有缓存通道使用到的环形队列也是采用的这种方案。这种方案队列为空和占满的判断条件如下：
+
+```
+head == tail // 队列为空
+tail +  nums_of_elment_in_queue == head
+```
+![循环队列之记录元素个数法](https://static.cyub.vip/images/202106/circular_queue2.png)
+
+### 删除操作
+
+删除操作即出队操作。
+
+```go
+func (d *poolDequeue) popHead() (interface{}, bool) {
+	var slot *eface
+	for {
+		ptrs := atomic.LoadUint64(&d.headTail)
+		head, tail := d.unpack(ptrs)
+		if tail == head { // 队列为空情况
+			return nil, false
+		}
+
+		head--
+		ptrs2 := d.pack(head, tail)
+
+		// 先原子性更新head索引信息，更新成功，则取出队列最新的元素所在槽位地址
+		if atomic.CompareAndSwapUint64(&d.headTail, ptrs, ptrs2) {
+			slot = &d.vals[head&uint32(len(d.vals)-1)]
+			break
+		}
+	}
+
+	val := *(*interface{})(unsafe.Pointer(slot)) // 取出槽位对应存储的值
+	if val == dequeueNil(nil) {
+		val = nil
+	}
+
+	// 不同与popTail，popHead是没有竞态问题，所以可以直接将其复制为eface{}
+	*slot = eface{}
+	return val, true
+}
+
+func (d *poolDequeue) popTail() (interface{}, bool) {
+	var slot *eface
+	for {
+		ptrs := atomic.LoadUint64(&d.headTail)
+		head, tail := d.unpack(ptrs)
+		if tail == head { // 队列为空情况
+			return nil, false
+		}
+
+		ptrs2 := d.pack(head, tail+1)
+		// 先原子性更新tail索引信息，更新成功，则取出队列最后一个元素所在槽位地址
+		if atomic.CompareAndSwapUint64(&d.headTail, ptrs, ptrs2) {
+			slot = &d.vals[tail&uint32(len(d.vals)-1)]
+			break
+		}
+	}
+
+	val := *(*interface{})(unsafe.Pointer(slot))
+	if val == dequeueNil(nil) {
+		val = nil
+	}
+
+	/**
+		理解后面代码，我们需意识到*slot = eface{}或slot = *eface(nil)不是一个原子操作。
+		这是因为每个槽位存放2个8字节的unsafe.Pointer。而Go atomic包是不支持16字节原子操作，只能原子性操作solt中的其中一个字段。
+
+		后面代码中先将solt.val置为nil，然后原子操作solt.typ，那么pushHead操作时候，只需要判断solt.typ是否nil，既可以判断这个槽位完全被清空了（当solt.typ==nil时候，solt.val一定是nil）。
+	 */
+	slot.val = nil
+	atomic.StorePointer(&slot.typ, nil)
+
+	return val, true
+}
+```
+
+### 插入操作
+
+插入操作即入队操作。
+
+```go
+func (d *poolDequeue) pushHead(val interface{}) bool {
+	ptrs := atomic.LoadUint64(&d.headTail)
+	head, tail := d.unpack(ptrs)
+	if (tail+uint32(len(d.vals)))&(1<<dequeueBits-1) == head { // 队列已写满情况
+		return false
+	}
+	slot := &d.vals[head&uint32(len(d.vals)-1)]
+
+	typ := atomic.LoadPointer(&slot.typ)
+	if typ != nil { // 说明有其他Goroutine正在pop此槽位，当pop完成之后会drop掉此槽位，队列还是保持写满状态
+		return false
+	}
+
+	if val == nil {
+		val = dequeueNil(nil)
+	}
+	*(*interface{})(unsafe.Pointer(slot)) = val
+
+	atomic.AddUint64(&d.headTail, 1<<dequeueBits)
+	return true
+}
+```
+
+## pool回收
+
+文章开头介绍sync.Pool时候，我们提到缓存池中的对象会在每2个GC循环中清除。我们现在看看这块逻辑：
+
+```go
+func poolCleanup() {
+
+	for _, p := range oldPools { // 清空victim cache
+		p.victim = nil
+		p.victimSize = 0
+	}
+
+	// 将primary cache(local pool)移动到victim cache
+	for _, p := range allPools {
+		p.victim = p.local
+		p.victimSize = p.localSize
+		p.local = nil
+		p.localSize = 0
+	}
+
+	oldPools, allPools = allPools, nil
+}
+
+func init() {
+	runtime_registerPoolCleanup(poolCleanup)
+}
+```
+
+sync.Pool通过在包初始化时候使用`runtime_registerPoolCleanup`注册GC的钩子poolCleanup来进行pool回收处理。`runtime_registerPoolCleanup`函数通过编译指令`go:linkname`连接到 [runtime/mgc.go](https://github.com/golang/go/blob/go1.14.13/src/runtime/mgc.go) 文件中 [sync_runtime_registerPoolCleanup](https://github.com/golang/go/blob/go1.14.13/src/runtime/mgc.go#L2214-L2217) 函数: 
+
+```go
+var poolcleanup func()
+
+//go:linkname sync_runtime_registerPoolCleanup sync.runtime_registerPoolCleanup
+func sync_runtime_registerPoolCleanup(f func()) {
+	poolcleanup = f
+}
+
+func clearpools() {
+	// clear sync.Pools
+	if poolcleanup != nil {
+		poolcleanup()
+	}
+	...
+}
+
+// gc入口
+func gcStart(trigger gcTrigger) {
+	...
+	clearpools()
+	...
+}
+```
+
+poolCleanup函数会在一次GC时候，会将`local pool`中缓存对象移动到`victim cache`中，然后在下一次GC时候，清空`victim cache`对象。
 
 ## 进一步阅读
 
