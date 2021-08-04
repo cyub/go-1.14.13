@@ -44,9 +44,11 @@ Golang版本是go1.14.13
 	- [ ] [切片](./note/type/slice.md)
 - [x] [context](./notes/context/context.md)
 - [ ] [syscall](./notes/syscall/syscall.md)
+- [ ] [信号](./notes/semaphore/semaphore.md)
 - misc
 	- [x] [no copy机制](./notes/misc/nocopy.md)
 	- [x] [Go汇编](./notes/misc/assembly.md)
 	- [x] [runtime hacking](./notes/misc/runtime.md)
 	- [x] [GDB使用](./notes/misc/gdb.md)
 	- [x] [CPU亲和性](./notes/misc/cpu_affinity.md)
+	- [ ] [Epoll](./notes/misc/epoll.md)
