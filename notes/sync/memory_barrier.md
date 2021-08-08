@@ -1,5 +1,7 @@
 ## Cache Consistency
 
+![](https://static.cyub.vip/images/202107/cpu_cache.png)
+
 为了解决CPU与内存访问之间的巨大速度差异，在CPU中引入Cache系统，每个CPU核心都有自己独有的Cache，但这会造成同一个内存块，在多个CPU之间有多个备份，这就会造成访问数据的不一致。为了解决缓存不一致的情况，需要采用一致性协议`MESI`进行同步。
 
 为了解决`MESI`协议中，Shared或Invalidate状态下的`Cache line`需要等待其他CPU的invalidate acknowledge导致的不必要的等待，引入了`Store buffer`；为了解决CPU响应invalidate message不及时问题，引入了`Invalidate queue`。由于`Store buffer`和`Invalidate queue`的引入，所以最终的缓存架构如下：
@@ -205,6 +207,39 @@ void bar(void)
 
 在锁的实现上，一般lock都会加入读屏障，保证后续代码可以读到别的cpu核心上的未回写的缓存数据，而unlock都会加入写屏障，将所有的未回写的缓存进行回写。
 
+内存屏障(memory barrier)，又叫做内存栅栏(memory fence)，对于X86平台来说，编译器屏障分为三种：
+
+- Load Barrier，读屏障
+
+    对应是lfence指令，在读指令前插入读屏障，可以让高速缓存中的数据失效，重新从主内存加载数据
+
+- Store Barrier，写屏障
+
+    对应是sfence指令，在写指令之后插入写屏障，能让写入缓存的最新数据写回到主内存
+
+- Full Barrier，读写屏障
+
+    对应是mfence指令，具备lfence和sfence的能力
+
+除了内存屏障外，Lock前缀指令能够完成类似内存屏障的功能。Lock会对CPU总线和高速缓存加锁，可以理解为CPU指令级的一种锁。它后面可以跟ADD, ADC, AND, BTC, BTR, BTS, CMPXCHG, CMPXCH8B, DEC, INC, NEG, NOT, OR, SBB, SUB, XOR, XADD, and XCHG等指令。
+
+Lock前缀实现了类似的能力：
+
+- 它先对总线/缓存加锁，然后执行后面的指令，最后释放锁后会把高速缓存中的脏数据全部刷新回主内存
+
+- 在Lock锁住总线的时候，其他CPU的读写请求都会被阻塞，直到锁释放。Lock后的写操作会让其他CPU相关的cache line失效，从而从新从内存加载最新的数据。这个是通过缓存一致性协议做的
+
+## Cache Line
+
+对于CPU来说，它并不关心程序中操作的对象，它只关心对某个内存块的读和写，为了让读写速度更快，CPU会首先把数据从主存中的数据以cache line的粒度读到CPU cache中，一个cache line一般是64 bytes。假设程序中读取某一个int变量，CPU并不是只从主存中读取4个字节，而是会一次性读取64个字节，然后放到cpu cache中。因为往往紧挨着的数据，更有可能在接下来会被使用到。比如遍历一个数组，因为数组空间是连续的，所以并不是每次取数组中的元素都要从主存中去拿，第一次从主存把数据放到cache line中，后续访问的数据很有可能已经在cache中了。
+
+### cache hit
+
+CPU获取的内存地址在cache中存在，叫做cache hit。
+
+### cache miss
+
+如果CPU的访问的内存地址不在L1 cache中，就叫做L1 cache miss，由于访问主存的速度远远慢于指令的执行速度，一旦发生cache miss，CPU就会在上一级cache中获取，最差的情况需要从主存中获取。一旦要从主存中获取数据，当前指令的执行相对来说就会显得非常慢。
 
 ## False Sharing
 
@@ -219,3 +254,4 @@ void bar(void)
 - [Why Memory Barriers？](http://www.wowotech.net/kernel_synchronization/Why-Memory-Barriers.html)
 - [什么是内存屏障？ Why Memory Barriers ?](https://blog.csdn.net/s2603898260/article/details/109234770)
 - [伪共享(False Sharing)](http://ifeve.com/falsesharing/)
+- [Data alignment: Straighten up and fly right](https://developer.ibm.com/technologies/systems/articles/pa-dalign/)
