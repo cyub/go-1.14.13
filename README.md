@@ -51,4 +51,5 @@ Golang版本是go1.14.13
 	- [x] [runtime hacking](./notes/misc/runtime.md)
 	- [x] [GDB使用](./notes/misc/gdb.md)
 	- [x] [CPU亲和性](./notes/misc/cpu_affinity.md)
-	- [ ] [Epoll](./notes/misc/epoll.md)
+	- [x] [Epoll](./notes/misc/epoll.md)
+	- [ ] [runtime.mutex](./notes/misc/runtime_mutex.md)
