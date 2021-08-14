@@ -1,5 +1,7 @@
 # epoll
 
+epoll是linux中IO多路复用的一种机制，I/O多路复用就是通过一种机制，一个进程可以监视多个描述符，一旦某个描述符就绪（一般是读就绪或者写就绪），能够通知程序进行相应的读写操作。当然linux中IO多路复用不仅仅是epoll，其他多路复用机制还有select、poll。
+
 ## epoll接口的三个函数
 
 ### 创建epoll句柄
@@ -60,7 +62,7 @@ struct epoll_event {
 - EPOLLONESHOT
     只监听一次事件，当监听完这次事件之后，如果还需要继续监听这个socket的话，需要再次把这个socket加入到EPOLL队列里
 
-epoll_event.data.ptr是void *指针，用来传递用户自定义参数，当epoll_wait返回时候，epoll_event.data.ptr也会原值返回。
+epoll_event.data.ptr是void *指针，用来传递用户自定义参数，当epoll_wait返回时候，epoll_event.data.ptr也会原值返回。**Go语言在实现netpoll时候，就是基于这个，会将epoll_event.data.ptr指向fd相关的G，那么当epoll_wait返回时候，根据此唤醒挂起的G来进行读写fd.**
 
 ### epoll等待
 
@@ -80,8 +82,10 @@ epoll_wait用于等待事件的产生。epoll_wait一共有4个参数：
 epoll对文件描述符有两种操作模式
 
 - LT（level trigger水平模式）
+
     LT是epoll的默认操作模式，当epoll_wait函数检测到有事件发生并将通知应用程序，而应用程序不一定必须立即进行处理，这样epoll_wait函数再次检测到此事件的时候还会通知应用程序，直到事件被处理。LT支持blocksocket和no_blocksocket。
 - ET（edge trigger边缘模式）
+
     ET模式下，只要epoll_wait函数检测到事件发生，通知应用程序立即进行处理，后续的epoll_wait函数将不再检测此事件。因此ET模式在很大程度上降低了同一个事件被epoll触发的次数，因此效率比LT模式高。ET只支持no_block socket。
 
 ## epoll 优缺点
@@ -96,7 +100,7 @@ epoll对文件描述符有两种操作模式
 
 - 使用mmap加速内核与用户空间的消息传递
 
-    无论是select,poll还是epoll都需要内核把FD消息通知给用户空间，如何避免不必要的内存拷贝就显得很重要。在这点上，epoll是通过内核于用户空间mmap同一块内存实现。
+    无论是select,poll还是epoll都需要内核把FD消息通知给用户空间，如何避免不必要的内存拷贝就显得很重要。在这点上，epoll是通过内核于用户空间mmap同一块内存实现。select/poll每次调用都要传递所要监控的所有fd给select/poll系统调用（这意味着每次调用都要将fd列表从用户态拷贝到内核态，当fd数目很多时，这会造成低效）。而每次调用epoll_wait时（作用相当于调用select/poll），不需要再传递fd列表给内核，因为已经在epoll_ctl中将需要监控的fd告诉了内核（epoll_ctl不需要每次都拷贝所有的fd，只需要进行增量式操作）。所以，在调用epoll_create之后，内核已经在内核态开始准备数据结构存放要监控的fd了。每次epoll_ctl只是对这个数据结构进行简单的维护。
 
 ## epoll服务端代码示例
 
@@ -284,7 +288,7 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	if mode == 'w' {
 		gpp = &pd.wg
 	}
-    ...
+	...
 	if waitio || netpollcheckerr(pd, mode) == 0 {
 		gopark(netpollblockcommit, unsafe.Pointer(gpp), waitReasonIOWait, traceEvGoBlockNet, 5)
 	}
@@ -470,8 +474,6 @@ retry:
 	return toRun
 }
 ```
-
-
 
 ### 完整流程
 
@@ -707,7 +709,7 @@ newFD函数定义如下：
 ```go
 // Network file descriptor.
 type netFD struct {
-	pfd poll.FD // 类型为internal/poll.FD
+	pfd poll.FD // 类型为internal/poll/FD
 
 	// immutable until Close
 	family      int
@@ -1034,7 +1036,7 @@ func (ln *TCPListener) accept() (*TCPConn, error) {
 		setKeepAlive(fd, true)
 		ka := ln.lc.KeepAlive
 		if ln.lc.KeepAlive == 0 {
-			ka = defaultTCPKeepAlive
+			ka = defaultTCPKeepAlive // keepalive默认15min
 		}
 		setKeepAlivePeriod(fd, ka)
 	}
@@ -1235,7 +1237,7 @@ func (fd *netFD) Read(p []byte) (n int, err error) {
 }
 ```
 
-而netFD.Read是由internal/pollFD实现：
+而netFD.Read是由internal/poll.FD实现：
 
 ```go
 func (fd *FD) Read(p []byte) (int, error) {
@@ -1284,6 +1286,156 @@ Read操作和Accept类似，最后都是调用`fd.pd.waitRead`来处理没有数
 #### Write操作
 
 同Read类似，略。
+
+## keepalive
+
+keepalive是一种探活机制，一般用于服务端探测客户端存活状态，当客户端异常时候，主动下掉服务端维持的长连接，减少资源消耗。默认情况由内核以下几个参数控制：
+
+```
+# sudo sysctl -a | grep keepalive
+net.ipv4.tcp_keepalive_intvl = 75
+net.ipv4.tcp_keepalive_probes = 9
+net.ipv4.tcp_keepalive_time = 7200
+```
+
+- tcp_keepalive_time
+
+	连接处于空闲状态下最长多长时间会发送keepalive包。默认2小时。当对方回复如下三种情况下，会采取不同操作。
+	- 对方回复ACK
+
+		说明对方处于存活状态，不做任何处理。等待tcp_keepalive_time再发送keepalive包
+	- 对方回复RST
+
+		说明对方重启或下线，则服务端会关闭此连接
+	- 对方没有任何回复
+
+		那么会重试
+tcp_keepalive_probes次，每次间隔tcp_keepalive_intvl秒，若最后还是不可达，那么向应用程序返回ETIMEOUT或EHOST错误
+
+- tcp_keepalive_intvl
+
+	keepalive报文包重试间隔
+
+- tcp_keepalive_probes
+
+	keepalive报文包最大重试次数
+
+
+关于keepalive包，一般有两种情况：
+
+1. 发送一个空包
+
+2. 发送一个字节大小的包，包内容为空字符，对应就是ascii码表中0x00对应的那个符号。
+
+	这里面有个技巧。假定客户端上一次发送的接收ack是101，那么服务端发送keepalive的seq是100，即客户端ack减少1。客户端接收到这个包，发现序号100的报文之前已经接收过了，那么就会丢弃这个空字符，也就不正常报文造成干扰了，接着响应ack。
+
+需要注意的是内核参数并不能决定应用程序是否开启keepalive机制。这需要应用程序开启。我们可以针对每个fd设置keepalive参数，下面是相关系统调用：
+
+```c
+setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) // 开启keepalive
+setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) // 设置tcp_keepalive_time
+setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val)) // 设置tcp_keepalive_intvl
+setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val)) // 设置tcp_keepalive_probes
+```
+
+### Go中的keepalive
+
+Go语言中每当一个新连接accept进来时候，默认会开启keepalive机制:
+
+```go
+func (ln *TCPListener) accept() (*TCPConn, error) {
+	fd, err := ln.fd.accept()
+	if err != nil {
+		return nil, err
+	}
+	tc := newTCPConn(fd)
+	if ln.lc.KeepAlive >= 0 {
+		setKeepAlive(fd, true) // 开启keepalive
+		ka := ln.lc.KeepAlive
+		if ln.lc.KeepAlive == 0 {
+			ka = defaultTCPKeepAlive // tcp_keepalive_time默认15min
+		}
+		setKeepAlivePeriod(fd, ka) // 设置tcp_keepalive_time
+	}
+	return tc, nil
+}
+```
+
+setKeepAlive和setKeepAlivePeriod函数操作的对象是netFD对象：
+```go
+func setKeepAlive(fd *netFD, keepalive bool) error {
+	err := fd.pfd.SetsockoptInt(syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, boolint(keepalive))
+	runtime.KeepAlive(fd)
+	return wrapSyscallError("setsockopt", err)
+}
+
+// setKeepAlivePeriod函数中没有设置tcp_keepalive_probes，
+// 但将tcp_keepalive_intvl和tcp_keepalive_time设置为相同值，这相当于设置tcp_keepalive_probes=1。
+func setKeepAlivePeriod(fd *netFD, d time.Duration) error {
+	// The kernel expects seconds so round to next highest second.
+	secs := int(roundDurationUp(d, time.Second))
+	if err := fd.pfd.SetsockoptInt(syscall.IPPROTO_TCP, syscall.TCP_KEEPINTVL, secs); err != nil { // 设置tcp_keepalive_intvl
+		return wrapSyscallError("setsockopt", err)
+	}
+	err := fd.pfd.SetsockoptInt(syscall.IPPROTO_TCP, syscall.TCP_KEEPIDLE, secs) // 设置tcp_keepalive_time
+	runtime.KeepAlive(fd)
+	return wrapSyscallError("setsockopt", err)
+}
+
+func (fd *FD) SetsockoptInt(level, name, arg int) error {
+	if err := fd.incref(); err != nil {
+		return err
+	}
+	defer fd.decref()
+	return syscall.SetsockoptInt(fd.Sysfd, level, name, arg)
+}
+```
+
+系统调用包syscall中SetsockoptInt的实现如下：
+
+```go
+func SetsockoptInt(fd, level, opt int, value int) (err error) {
+	var n = int32(value)
+	return setsockopt(fd, level, opt, unsafe.Pointer(&n), 4)
+}
+
+func setsockopt(s int, level int, name int, val unsafe.Pointer, vallen uintptr) (err error) {
+	_, _, e1 := Syscall6(SYS_SETSOCKOPT, uintptr(s), uintptr(level), uintptr(name), uintptr(val), uintptr(vallen), 0)
+	if e1 != 0 {
+		err = errnoErr(e1)
+	}
+	return
+}
+```
+
+Syscall6是通过汇编实现系统调用的。系统调用约定参见[使用专有系统调用指令](https://github.com/cyub/go-1.14.13/blob/master/notes/misc/assembly.md#%E4%BD%BF%E7%94%A8%E4%B8%93%E6%9C%89%E7%B3%BB%E7%BB%9F%E8%B0%83%E7%94%A8%E6%8C%87%E4%BB%A4): 
+```
+// func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr)
+TEXT ·Syscall6(SB),NOSPLIT,$0-80
+	CALL	runtime·entersyscall(SB)
+	MOVQ	a1+8(FP), DI
+	MOVQ	a2+16(FP), SI
+	MOVQ	a3+24(FP), DX
+	MOVQ	a4+32(FP), R10
+	MOVQ	a5+40(FP), R8
+	MOVQ	a6+48(FP), R9
+	MOVQ	trap+0(FP), AX	// syscall entry
+	SYSCALL
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	ok6
+	MOVQ	$-1, r1+56(FP)
+	MOVQ	$0, r2+64(FP)
+	NEGQ	AX
+	MOVQ	AX, err+72(FP)
+	CALL	runtime·exitsyscall(SB)
+	RET
+ok6:
+	MOVQ	AX, r1+56(FP)
+	MOVQ	DX, r2+64(FP)
+	MOVQ	$0, err+72(FP)
+	CALL	runtime·exitsyscall(SB)
+	RET
+```
 
 ## 参考资料
 
