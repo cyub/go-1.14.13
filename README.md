@@ -53,3 +53,4 @@ Golang版本是go1.14.13
 	- [x] [CPU亲和性](./notes/misc/cpu_affinity.md)
 	- [x] [Epoll](./notes/misc/epoll.md)
 	- [ ] [runtime.mutex](./notes/misc/runtime_mutex.md)
+	- [ ] [Delve工作机制](./notes/misc/delve.md)
