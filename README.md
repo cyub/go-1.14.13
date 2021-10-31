@@ -45,6 +45,7 @@ Golang版本是go1.14.13
 - [x] [context](./notes/context/context.md)
 - [ ] [syscall](./notes/syscall/syscall.md)
 - [ ] [信号](./notes/semaphore/semaphore.md)
+- [ ] [CGO](./notes/cgo/cgo.md)
 - misc
 	- [x] [no copy机制](./notes/misc/nocopy.md)
 	- [x] [Go汇编](./notes/misc/assembly.md)
