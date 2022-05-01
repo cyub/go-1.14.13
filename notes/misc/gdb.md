@@ -31,7 +31,7 @@ go build -gcflags="-N -l" -o test main.go
 ```bash
 gdb ./test
 ```
-进入gdb调试界面之后，执行`run`命令运行程序。若程序已经运行，我们可以`attach`该程序的进程id进行调试:
+gdb命令指定二进制文件，进入gdb调试界面之后，执行`run`命令运行程序。若程序已经运行，我们可以`attach`该程序的进程id进行调试:
 
 ```bash
 $ gdb
@@ -54,6 +54,12 @@ $ gdb
 (gdb) file test
 Reading symbols from test...done.
 (gdb) attach 1785
+```
+
+我们可以通过`--args`选项指定程序启动参数：
+
+```bash
+gdb --args executablename arg1 arg2 arg3
 ```
 
 GDB也支持多窗口图形启动运行，一个窗口显示源码信息，一个窗口显示调试信息：
@@ -277,7 +283,7 @@ GDB中的`list`命令用来显示源码信息。`list`命令可以简写成`l`�
 
     显示所有寄存器的值。GDB提供四个标准寄存器：pc是程序计数器寄存器，sp是堆栈指针。fp用于记录当前堆栈帧的指针，ps用于记录处理器状态的寄存器，GDB会处理好不同架构系统寄存器不一致问题，比如对于amd64架构，pc对应就是rip寄存器。
 
-    引用寄存器内容是将寄存器名前置$符作为变量来用。比如$pc就是程序计数器寄存器值。
+    引用寄存器内容是将寄存器名前置$符作为变量来用。比如$pc就是程序计数器寄存器值，$sp是堆栈指针寄存器值。
 
 - info args
 
@@ -349,6 +355,10 @@ GDB中的`list`命令用来显示源码信息。`list`命令可以简写成`l`�
 
     通过正则匹配来查看程序中的类型符号
 
+-  info sharedlibrary regexp
+
+    通过正则匹配，查看共享库信息，正则匹配去掉表示查看所有的共享库，如果共享库带"*"表示该库缺少调试信息
+
 其他类似命令有：
 
 - show args
@@ -370,6 +380,10 @@ GDB中的`list`命令用来显示源码信息。`list`命令可以简写成`l`�
 - ptype var1
 
     显示变量var1类型，若是var1结构体类型，会显示该结构体定义信息。
+
+- show substitute-path
+
+    显示源码路径转换配置
 
 ## 查看调用栈
 
@@ -575,6 +589,7 @@ $2 = {2, 4, 6}
 (gdb) x $rsp # 打印rsp寄存器执行的地址的值
 (gdb) x $rsp + 8 # 打印rsp加8后的地址指向的值
 (gdb) x 0xc000068fd0 # 打印内存0xc000068fd0指向的值
+(gdb) x/5i schedule # 打印函数schedule前5条指令
 ```
 
 ## 修改变量或寄存器值
@@ -612,6 +627,39 @@ $2 = {2, 4, 6}
 ```bash
 (gdb) shell cat /proc/27889/maps # 查看进程27889的内存映射。若想查看当前进程id，可以使用info proc命令获取
 (gdb) shell ls -alh
+```
+
+## GDB对go runtime支持
+
+- runtime.Breakpoint()：触发调试器断点。
+- runtime/debug.PrintStack()：显示调试堆栈。
+- log：适合替代 print显示调试信息
+
+## 为系统调用设置catchpoint
+
+gdb支持为系统调用设置捕获点，我们可以通过系统调用号(syscall numbers)或者系统调用助记符(syscall mnemonic names，也称为系统调用名称)来设置catchpoint，不指定系统调用的话，默认是捕获所有系统调用。
+
+```
+(gdb) catch syscall 231
+Catchpoint 1 (syscall 'exit_group' [231])
+(gdb) catch syscall exit_group
+Catchpoint 2 (syscall 'exit_group' [231])
+(gdb) catch syscall
+Catchpoint 3 (any syscall)
+```
+
+## 设置源文件查找路径
+
+在程序调试过程中，构建程序的源文件位置更改之后，gdb不能找到源文件位置，我们可以使用`directory`命令设置查找源文件的路径。
+
+```
+directory ~/www/go/src/github.com/go-delve/
+```
+
+`directory`命令只使用相对路径下的源文件，若绝对路径下源文件找不到，我们可以使用`set substitute-path` 设置路径替换。
+
+```
+set substitute-path ~/www/go/src/github.com/go-delve/ ~/www/go/src/github.com/go-delve2/
 ```
 
 ## 资料
