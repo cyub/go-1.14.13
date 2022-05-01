@@ -662,6 +662,23 @@ directory ~/www/go/src/github.com/go-delve/
 set substitute-path ~/www/go/src/github.com/go-delve/ ~/www/go/src/github.com/go-delve2/
 ```
 
+## 批量执行命令
+
+gdb支持以脚本形式运行命令，我们可以使用下面的选项：
+
+- `-ex`选项可以用来指定执行命令
+- `-iex`选来用来指定加载应用程序之前需执行的命令
+- `-x`选项用来从指定文件中加载命令
+- `-batch`类似`-q`，支持安静模式，会指示gdb在所有命令执行完成之后，退出
+
+```bash
+# 1. 打印提示语 2. 在main.main出设置断点 3. 运行程序 4. 执行完成程序退出gdb
+gdb -iex 'echo 开始执行:\n' -ex "b main.main" -ex "run" -batch ./main
+
+# 设置exit/exit_group系统调用追踪点，然后运行程序，最后打印backtrace信息
+gdb -ex "catch syscall exit exit_group" -ex "run" -ex "bt" -batch ./main
+```
+
 ## 资料
 
 - [Beej's Quick Guide to GDB](http://beej.us/guide/bggdb/)
