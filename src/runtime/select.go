@@ -17,21 +17,22 @@ const debugSelect = false
 // Known to compiler.
 // Changes here must also be made in src/cmd/compile/internal/gc/select.go's walkselectcases.
 const (
-	caseNil = iota
-	caseRecv
-	caseSend
-	caseDefault
+	// scase类型的所有枚举值
+	caseNil     = iota // nil通道
+	caseRecv           // 从通道读取数据
+	caseSend           // 发送数据至通道
+	caseDefault        // default分支
 )
 
 // Select case descriptor.
 // Known to compiler.
 // Changes here must also be made in src/cmd/internal/gc/select.go's scasetype.
 type scase struct {
-	c           *hchan         // chan
-	elem        unsafe.Pointer // data element
-	kind        uint16
-	pc          uintptr // race pc (for race detector / msan)
-	releasetime int64
+	c           *hchan         // case语句中操作的通道
+	elem        unsafe.Pointer // 指向数据地址，比如i <- ch中i变量的地址，ch<-j 中j变量的地址
+	kind        uint16         // scase类型，见上面scase类型的所有枚举值
+	pc          uintptr        // race pc (for race detector / msan)
+	releasetime int64          // 用于pprof中记录select阻塞时间
 }
 
 var (
@@ -47,6 +48,8 @@ func sellock(scases []scase, lockorder []uint16) {
 	var c *hchan
 	for _, o := range lockorder {
 		c0 := scases[o].c
+		// 由于lockorder按照通道的地址排序过，如果scase的通道是同一个，那么对应到lockorder中一定相邻的
+		// 为了避免对同一个通道上锁两次（Go中锁不是可重入类型的锁），需要确保待上锁通道和上一次上锁的通道不是同一个(c0 != c)
 		if c0 != nil && c0 != c {
 			c = c0
 			lock(&c.lock)
@@ -115,9 +118,61 @@ func selparkcommit(gp *g, _ unsafe.Pointer) bool {
 	return true
 }
 
+/**
+* 对于空select语句，会编译成block()，永远挂起当前G：
+  select {
+  }
+*/
 func block() {
 	gopark(nil, nil, waitReasonSelectNoCases, traceEvGoStop, 1) // forever
 }
+
+/**
+	select底层实现实现方式有4种：
+	1. 对于单条case语句：
+	select {
+	case ch <- 1:
+	}
+	直接调用runtime.chansend1()或者runtime.chanrecv1()
+
+	2. 对于空select
+	select{
+	}
+	直接直接调用runtime.block()
+
+	3. 对于两条分支语句，且其中一条为default语句（即通道非阻塞操作)
+	3.1：
+	select {
+	case ch<-1:
+    default:
+	}
+	上面语句将会编译成：
+	if runtime.selectnbsend(c, v) {
+		...
+	} else {
+		...
+	}
+
+	3.2：
+	select {
+	case <-ch:
+    default:
+	}
+	上面语句将会编译成：
+	if runtime.selectnbrecv(c, v) {
+		...
+	} else {
+		...
+	}
+
+	4. 对于两条或两条以上case语句(两条语句时候，需不含default分支)
+	select {
+	case ch<-1:
+	case ch<-2:
+	case ch2<-3:
+	}
+	调用runtime.selectgo语句选择一个已就绪的分支执行(已就绪的含义就是当前case分支的通道可以读取或者写入)，若没有已就绪的分支，如果存在default分支，那么执行default分支
+*/
 
 // selectgo implements the select statement.
 //
@@ -134,18 +189,23 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 		print("select: cas0=", cas0, "\n")
 	}
 
+	// cas1指向[1<<16]scase，order1指向[1<<17]uint16
+	// 数组尺寸需要使用标量指定，不能使用变量指定，所以通过cas0转换成cas1时候不能用(*[ncases]scase)(unsafe.Pointer(cas0))，
+	// 为啥用1<<16，其实只要尺寸足够大就可以了，毕竟没有case分支语句能够达到2^16条的
 	cas1 := (*[1 << 16]scase)(unsafe.Pointer(cas0))
 	order1 := (*[1 << 17]uint16)(unsafe.Pointer(order0))
 
-	scases := cas1[:ncases:ncases]
-	pollorder := order1[:ncases:ncases]
-	lockorder := order1[ncases:][:ncases:ncases]
+	scases := cas1[:ncases:ncases]               // scases是所有scase组成的切片（注意：Go语言中 数组是可以通过数组指针访问的）
+	pollorder := order1[:ncases:ncases]          // pollorder是轮询序列，用于实现随机遍历scases切片
+	lockorder := order1[ncases:][:ncases:ncases] // lockorder是上锁序列，用于实现对scase中的通道lock操作
 
 	// Replace send/receive cases involving nil channels with
 	// caseNil so logic below can assume non-nil channel.
 	for i := range scases {
 		cas := &scases[i]
 		if cas.c == nil && cas.kind != caseDefault {
+			// 将非default分支，且nil通道的case分支转换成kind为caseNil的scase
+			// cas = &scase{c:nil, kind:caseNil}
 			*cas = scase{}
 		}
 	}
@@ -167,6 +227,7 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 	// optimizing (and needing to test).
 
 	// generate permuted order
+	// pollorder 是0到ncases的序列且已打乱
 	for i := 1; i < ncases; i++ {
 		j := fastrandn(uint32(i + 1))
 		pollorder[i] = pollorder[j]
@@ -175,6 +236,7 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 
 	// sort the cases by Hchan address to get the locking order.
 	// simple heap sort, to guarantee n log n time and constant stack footprint.
+	// lockorder按照scase中通道的地址排序，这保证了具有相同通道的scase在lockerorder是相邻的，这么做是为了防止对同一个通道多次上锁，具体见sellock函数
 	for i := 0; i < ncases; i++ {
 		j := i
 		// Start with the pollorder to permute cases on the same channel.
@@ -219,7 +281,7 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 	}
 
 	// lock all the channels involved in the select
-	sellock(scases, lockorder)
+	sellock(scases, lockorder) // 对scases中所有通道上锁
 
 	var (
 		gp     *g
@@ -239,24 +301,24 @@ loop:
 	var casi int
 	var cas *scase
 	var recvOK bool
-	for i := 0; i < ncases; i++ {
+	for i := 0; i < ncases; i++ { // 编译所有的case分支
 		casi = int(pollorder[i])
 		cas = &scases[casi]
 		c = cas.c
 
 		switch cas.kind {
-		case caseNil:
+		case caseNil: // nil通道，读或者写nil通道永远都是阻塞的，即该case永远不会选中selected
 			continue
 
 		case caseRecv:
-			sg = c.sendq.dequeue()
+			sg = c.sendq.dequeue() // 当通道有等待的sender
 			if sg != nil {
 				goto recv
 			}
-			if c.qcount > 0 {
+			if c.qcount > 0 { // 当前通道有缓存数据，则从通道里面读取
 				goto bufrecv
 			}
-			if c.closed != 0 {
+			if c.closed != 0 { // 当前通道已关闭
 				goto rclose
 			}
 
@@ -264,25 +326,25 @@ loop:
 			if raceenabled {
 				racereadpc(c.raceaddr(), cas.pc, chansendpc)
 			}
-			if c.closed != 0 {
+			if c.closed != 0 { // 当前通道已关闭，直接panic
 				goto sclose
 			}
-			sg = c.recvq.dequeue()
+			sg = c.recvq.dequeue() // 当通道有等待的recevier
 			if sg != nil {
 				goto send
 			}
-			if c.qcount < c.dataqsiz {
+			if c.qcount < c.dataqsiz { // 当前buffered通道还有可用缓存空间
 				goto bufsend
 			}
 
-		case caseDefault:
+		case caseDefault: // default分支
 			dfli = casi
 			dfl = cas
 		}
 	}
 
-	if dfl != nil {
-		selunlock(scases, lockorder)
+	if dfl != nil { // 所有case分支都未就绪，那就执行default分支
+		selunlock(scases, lockorder) // 将所有scase上的通道unlock
 		casi = dfli
 		cas = dfl
 		goto retc
@@ -290,10 +352,10 @@ loop:
 
 	// pass 2 - enqueue on all chans
 	gp = getg()
-	if gp.waiting != nil {
+	if gp.waiting != nil { // 当前g处理waiting状态，非运行状态，这是异常情况
 		throw("gp.waiting != nil")
 	}
-	nextp = &gp.waiting
+	nextp = &gp.waiting // 此gp.waiting == nil
 	for _, casei := range lockorder {
 		casi = int(casei)
 		cas = &scases[casi]
@@ -301,9 +363,9 @@ loop:
 			continue
 		}
 		c = cas.c
-		sg := acquireSudog()
+		sg := acquireSudog() // 从二级缓存中获取sudog结构，尽量复用，避免对象分配
 		sg.g = gp
-		sg.isSelect = true
+		sg.isSelect = true // 标志当g处在select语句中
 		// No stack splits between assigning elem and enqueuing
 		// sg on gp.waiting where copystack can find it.
 		sg.elem = cas.elem
@@ -313,32 +375,34 @@ loop:
 		}
 		sg.c = c
 		// Construct waiting list in lock order.
-		*nextp = sg
+		*nextp = sg // 将sg挂到gp.waiting上
 		nextp = &sg.waitlink
 
 		switch cas.kind {
 		case caseRecv:
-			c.recvq.enqueue(sg)
+			c.recvq.enqueue(sg) // sudog入receiver队列
 
 		case caseSend:
-			c.sendq.enqueue(sg)
+			c.sendq.enqueue(sg) // sudog入sender队列
 		}
 	}
 
 	// wait for someone to wake us up
-	gp.param = nil
+	gp.param = nil // 当g从waiting状态唤醒后，param指向唤醒的对象sudog信息，这里面先清空，等待被唤醒
 	// Signal to anyone trying to shrink our stack that we're about
 	// to park on a channel. The window between when this G's status
 	// changes and when we set gp.activeStackChans is not safe for
 	// stack shrinking.
 	atomic.Store8(&gp.parkingOnChan, 1)
-	gopark(selparkcommit, nil, waitReasonSelect, traceEvGoBlockSelect, 1)
+	gopark(selparkcommit, nil, waitReasonSelect, traceEvGoBlockSelect, 1) // 挂起g
+
+	// 由于select中某个case的通道可读或者可写，当前G被唤醒，并被调度执行后开始执行下面代码
 	gp.activeStackChans = false
 
-	sellock(scases, lockorder)
+	sellock(scases, lockorder) // 将所有通道都lock住
 
-	gp.selectDone = 0
-	sg = (*sudog)(gp.param)
+	gp.selectDone = 0       // 标志当前select是否完成
+	sg = (*sudog)(gp.param) // 获取唤醒G的sudog信息，sudog里面包含对应的通道信息
 	gp.param = nil
 
 	// pass 3 - dequeue from unsuccessful chans
@@ -350,6 +414,22 @@ loop:
 	sglist = gp.waiting
 	// Clear all elem before unlinking from gp.waiting.
 	for sg1 := gp.waiting; sg1 != nil; sg1 = sg1.waitlink {
+		// 清空gp.waiting链表上sudog上的通道相关信息
+		// 存不存在清除了不能清空的通道信息？不存在。gp.waiting存在两个情况：
+		/*
+			情况1：
+				go func() {
+					ch <- 1 // waiting链表只有一个元素，清空没问题
+				}()
+
+			情况2:
+			 select {
+			 case <-ch:
+			 case <-ch2:
+			 case ch3<-1:
+			 }
+			 情况2清空也没问题，因为通道选择器一次最多只选择一个通道，如果选择ch，清空sudog中记录的ch2/ch3也是没问题的
+		*/
 		sg1.isSelect = false
 		sg1.elem = nil
 		sg1.c = nil
@@ -364,16 +444,16 @@ loop:
 		if sglist.releasetime > 0 {
 			k.releasetime = sglist.releasetime
 		}
-		if sg == sglist {
+		if sg == sglist { // 唤醒G的sudog对象，在挂载到g.param上已从sendq或recvq出队了
 			// sg has already been dequeued by the G that woke us up.
 			casi = int(casei)
 			cas = k
 		} else {
 			c = k.c
 			if k.kind == caseSend {
-				c.sendq.dequeueSudoG(sglist)
+				c.sendq.dequeueSudoG(sglist) // 从sender队列中drop掉sglist
 			} else {
-				c.recvq.dequeueSudoG(sglist)
+				c.recvq.dequeueSudoG(sglist) // 从receiver队列中drop掉sglist
 			}
 		}
 		sgnext = sglist.waitlink
@@ -392,6 +472,8 @@ loop:
 		// It's easiest not to duplicate the code and just recheck above.
 		// We know that something closed, and things never un-close,
 		// so we won't block again.
+
+		// 当select是由于通道被关闭唤醒，那么case为nil，那么继续执行loop逻辑
 		goto loop
 	}
 
@@ -470,6 +552,12 @@ bufsend:
 
 recv:
 	// can receive from sleeping sender (sg)
+	/* recv处理逻辑：
+	1. 当前通道是unbuffered 通道，则直接将sender数据handoff给当前接收者
+	2. 若是buffered通道，则从通道缓存中读取数据给当前接收者
+
+	无论1和2最后都会waiting状态的sender切换runable状态，等待再次调度
+	*/
 	recv(c, sg, cas.elem, func() { selunlock(scases, lockorder) }, 2)
 	if debugSelect {
 		print("syncrecv: cas0=", cas0, " c=", c, "\n")
