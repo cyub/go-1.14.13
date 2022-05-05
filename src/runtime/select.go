@@ -171,7 +171,7 @@ func block() {
 	case ch<-2:
 	case ch2<-3:
 	}
-	调用runtime.selectgo语句选择一个已就绪的分支执行(已就绪的含义就是当前case分支的通道可以读取或者写入)，若没有已就绪的分支，如果存在default分支，那么执行default分支
+	调用runtime.selectgo()会选择一个已就绪的分支执行(已就绪的含义就是当前case分支的通道可以读取或者写入)，若没有已就绪的分支，如果存在default分支，那么执行default分支
 */
 
 // selectgo implements the select statement.

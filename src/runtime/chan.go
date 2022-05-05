@@ -769,6 +769,14 @@ func (q *waitq) dequeue() *sudog {
 		// We use a flag in the G struct to tell us when someone
 		// else has won the race to signal this goroutine but the goroutine
 		// hasn't removed itself from the queue yet.
+
+		/**
+		通过cas操作g.selectDone 是了解决类似下面ch1和ch2同时可读写时候，同时唤醒G的竞态问题，因为select一次只能选择一个case通道
+		select {
+		case ch1<-1:
+		case ch2<-2:
+		}
+		*/
 		if sgp.isSelect && !atomic.Cas(&sgp.g.selectDone, 0, 1) {
 			continue
 		}
