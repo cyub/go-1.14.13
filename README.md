@@ -42,6 +42,7 @@ Golang版本是go1.14.13
 	- [x] [字符串](./notes/type/string.md)
 	- [x] [数组](./notes/type/array.md)
 	- [x] [切片](./notes/type/slice.md)
+	- [x] [特殊值与特殊结构](./notes/type/special_value.md)
 - [x] [context](./notes/context/context.md)
 - [ ] [syscall](./notes/syscall/syscall.md)
 - [ ] [信号](./notes/semaphore/semaphore.md)
