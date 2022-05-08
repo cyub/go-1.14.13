@@ -207,7 +207,7 @@ void bar(void)
 
 在锁的实现上，一般lock都会加入读屏障，保证后续代码可以读到别的cpu核心上的未回写的缓存数据，而unlock都会加入写屏障，将所有的未回写的缓存进行回写。
 
-内存屏障(memory barrier)，又叫做内存栅栏(memory fence)，对于X86平台来说，编译器屏障分为三种：
+内存屏障(memory barrier)，又叫做内存栅栏(memory fence)，对于X86平台来说，内存屏障分为三种：
 
 - Load Barrier，读屏障
 
@@ -255,3 +255,4 @@ CPU获取的内存地址在cache中存在，叫做cache hit。
 - [什么是内存屏障？ Why Memory Barriers ?](https://blog.csdn.net/s2603898260/article/details/109234770)
 - [伪共享(False Sharing)](http://ifeve.com/falsesharing/)
 - [Data alignment: Straighten up and fly right](https://developer.ibm.com/technologies/systems/articles/pa-dalign/)
+- [Memory Barriers:  a Hardware View for Software Hackers](http://www.puppetmastertrading.com/images/hwViewForSwHackers.pdf)

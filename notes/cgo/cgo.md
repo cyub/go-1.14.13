@@ -104,7 +104,7 @@ import "C"
 
 ## 变量
 
-### Go 语言中引用C 语言类型
+### Go 语言中引用 C 语言类型
 
 #### char
 
@@ -222,7 +222,7 @@ defer C.free(unsafe.Pointer(cs)) // C语言中字符串本质是char类型数组
 
 ## 函数
 
-### Go 语言调用C 语言函数
+### Go 语言调用 C 语言函数
 
 只要我们在序言中设置好`#include`之后，我们就可以在Go 语言可以直接调用标准库里面的函数，或者其他库里面的函数：
 
@@ -434,3 +434,4 @@ void main() {
 - [Call Go function from C function](https://dev.to/mattn/call-go-function-from-c-function-1n3)
 - [gopcap](https://github.com/akrennmair/gopcap)
 - [Setting up and using gccgo](https://golang.org/doc/install/gccgo)
+- [Calling between Go and C](https://pkg.go.dev/cmd/go#hdr-Calling_between_Go_and_C)

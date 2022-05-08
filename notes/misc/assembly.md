@@ -63,6 +63,23 @@
 **SP** | SP代表Stack Pointer，是栈指针寄存器，存放着执行函数对应栈帧的栈顶地址，且始终指向栈顶
 **BP** | BP代表Base Pointer，是栈帧基址指针寄存器，存放这执行函数对应栈帧的栈底地址，一般用于访问栈中的局部变量和参数
 **IP** | IP代表Instruction Pointer，是指令寄存器，指向处理器下条等待执行的指令地址(代码段内的偏移量)，每次执行完相应汇编指令IP值就会增加；IP是个特殊寄存器，不能像访问通用寄存器那样访问它。IP可被jmp、call和ret等指令隐含地改变
+**CS** | CS代表是Code Segment，是代码段寄存器，CS与寄存器IP相配合获得当前线程代码执行到的内存位置
+**DS** | DS代表是Data Segment，是数据段寄存器，DS与各通用寄存器配合访问内存中的数据
+**SS** | SS代表Stack Segment，是栈段寄存器，SS与寄存器(E)SP、(E)BP配合访问线程的调用栈
+**ES** | ES代表Extra Segment，是扩展段寄存器，ES用于特定字符串指令（如MOVS或CMPS）
+**FS** | FS是无特定的硬件用途的段寄存器，可以用作基指针地址，以便访问特殊的操作系统数据结构
+**GS** | 同FS类似
+
+**FS/GS用法**
+
+The FS segment is commonly used to **address Thread Local Storage (TLS). FS is usually managed by runtime code or a threading library**. Variables declared with the ‘__thread’ storage class specifier are instantiated per thread and the compiler emits the FS: address prefix for accesses to these variables. Each thread has its own FS base address so common code can be used without complex address offset calculations to access the per thread instances. Applications should not use FS for other purposes when they use runtimes or threading libraries which manage the per thread FS.
+
+The GS segment has no common use and can be used freely by applications. GCC and Clang support GS based addressing via address space identifiers.
+
+现代Linux x86-64下的fs/gs段寄存器的用途分别为：
+
+- 用户态使用fs寄存器引用线程的glibc TLS和线程在用户态的stack canary；用户态的glibc不使用gs寄存器；应用可以自行决定是否使用该寄存器（这里存在潜在的、充满想象力的优化空间）。
+- 内核态使用gs寄存器引用percpu变量和进程在内核态的stack canary；内核态不使用fs寄存器。
 
 
 ## CPU对存储器的读写
@@ -87,7 +104,7 @@ CPU从内存单元中读写数据的过程：
 
 ### 地址总线
 
-CPU是通过地址总线指定存储单元，地址总线传送的能力决定了CPU对存储单元的寻址能力。对于32位CPU，其寻址能力为2^32=4G。
+CPU是通过地址总线指定存储单元，地址总线传送的能力决定了CPU对存储单元的寻址能力。对于32位CPU，其寻址能力为2^32=4G（存储单元的尺寸是Byte，32位地址可以寻址地址空间大小 = 2 ^ 32 * 1Byte = 4G)。
 
 地址寄存器存储的是CPU当前要存取的数据或指令的地址，该地址是由地址总线传输到地址寄存器上的。
 
@@ -110,7 +127,7 @@ CPU位数与地址寄存器位数，以及数据总线的宽度是一致的。
 
 ## 应用程序在虚拟内存中的布局
 
-当应用程序运行起来时候，系统会将该应用加载到内存中，应用会独立的、完全的占用内存，该内存并不是物理内存，而是虚拟内存，对于32位系统，该虚拟内存大小是2^32 = 4G。操作系统会完成虚拟内存到物理内存的映射处理工作，应用程序并不需要关心。进程加载到虚拟内存中，这就牵扯到进程在虚拟内存的布局。
+当应用程序运行起来时候，系统会将该应用加载到内存中，应用会独立的、完全的占用所有内存，这里内存指的是虚拟内存，对于32位系统，该虚拟内存大小是2^32 = 4G。虚拟内存最终一定会映射到物理内存，操作系统会完成虚拟内存到物理内存的映射处理工作，应用程序并不需要关心。进程加载到虚拟内存中，这就牵扯到进程在虚拟内存的布局。
 
 进程在内存布局分为以下几大块
 - Stack - 栈
@@ -155,7 +172,7 @@ Low Addresses ----> '----------------------'
 
 ![](https://static.cyub.vip/images/202102/process_mem_layout.jpeg)
 
-在32位系统中进程空间(即用户空间）范围为`0x00000000 ~ 0xbfffffff`，内核空间范围为`0xc0000000 ~ 0xffffffff`, 实际上分配的进程空间并不是从0x00000000开始的，而是从0x08048000开始，到0xbfffffff结束。进程实际的esp指向的地址并不是从0xbfffffff开始的，因为linux系统会在程序初始化前，将一些命令行参数及环境变量以及`ELF Auxiliary Vectors`等信息放到栈上。具体布局如下：
+在32位系统中进程空间(即用户空间）范围为`0x00000000 ~ 0xbfffffff`，内核空间范围为`0xc0000000 ~ 0xffffffff`, 实际上分配的进程空间并不是从0x00000000开始的，而是从0x08048000开始，到0xbfffffff结束。进程实际的esp指向的地址并不是从0xbfffffff开始的，因为linux系统会在程序初始化前，将一些命令行参数及环境变量以及ELF辅助向量（`ELF Auxiliary Vectors`)等信息放到栈上。进程启动时，其空间布局如下所示（注意图示中地址是从低地址到高地址的）：
 
 ```
 stack pointer ->    [ argc = number of args ]     4
@@ -208,7 +225,7 @@ instruction src dst
 ```
 其中`instruction`是指令助记符，也叫操作码，比如`mov`就是一个指令助记符，`src`是源操作数，`dst`是目的操作。
 
-当引用寄存器时候，应在寄存器名称加前缀`%`，对于常数，则应加前缀`$`。
+当引用寄存器时候，应在寄存器名称加前缀`%`，对于常数，则应加前缀 **$**。
 
 ### 寻址方式
 
@@ -239,7 +256,6 @@ call func1 | --- | 调用函数func1
 ret | --- | 函数返回，将返回值存储到寄存器中或caller栈中，<br/>并将return address弹出到ip寄存器中
 
 
-
 当使用`mov`指令传递数据时，数据的大小由mov指令的后缀决定。
 
 ```as
@@ -267,13 +283,16 @@ je location | 如果flags寄存器设置了相等标志，则跳转到location
 jg, jge, jl, gle, jnz, ... location | 如果flags寄存器设置了>, >=, <, <=, != 0等标志，则跳转到location
 
 
-#### 栈管理指令
+#### 栈与地址管理指令
 
 指令 | 含义 | 等同操作
 --- | --- | ---
 pushl %eax | 将R[eax]入栈 | subl $4, %esp; <br/>movl %eax, (%esp)
 popl %eax | 将栈顶数据弹出，然后存储到R[eax] | movl (%esp), %eax <br/> addl $4, %esp
 leave | Restore the callers stack pointer | movl %ebp, %esp <br/>pop %ebp
+lea	8(%esp), %esi | 将R[esp]存放的地址加8，然后存储到R[esi] | R[esi] = R[esp] + 8
+
+**lea** 是`load effective address`的缩写，用于将一个内存地址直接赋给目的操作数。
 
 #### 函数调用指令
 
@@ -476,7 +495,7 @@ Go 汇编还引入 4 个伪寄存器：
 - `pkgname·add`中的`·`，是一个 unicode 的中点。在程序被链接之后，所有的中点`·`都会被替换为点号`.`。所以通过gdb调试打断点时候，应该是`b pagname.add`。
 - `(SB)`: SB 是一个虚拟寄存器，保存了静态基地址(static-base) 指针，即我们程序地址空间的开始地址。 "".add(SB) 表明我们的符号位于某个固定的相对地址空间起始处的偏移位置 (最终是由链接器计算得到的)
 
-  > objdump -j .text -t test | grep 'main.add' // 可获得main.add的绝对地址
+  > objdump -j .text -t test | grep 'main.add' # 可获得main.add的绝对地址
 
 - `NOSPLIT`: 向编译器表明不应该插入 stack-split 的用来检查栈需要扩张的前导指令。 在我们 add 函数的这种情况下，编译器自己帮我们插入了这个标记: 它足够聪明地意识到，由于 add 没有任何局部变量且没有它自己的栈帧，所以一定不会超出当前的栈；因此每次调用函数时在这里执行栈检查就是完全浪费 CPU 循环了
 - `$32-16`: `$32`代表即将分配的栈帧大小；而`$16`指定了调用方传入的参数与返回值的大小
@@ -993,3 +1012,6 @@ go build -gcflags="-N -l -S"  main.go
 - [A Readers Guide to x86 Assembly](https://cseweb.ucsd.edu/classes/sp10/cse141/pdf/02/S01_x86_64.key.pdf)
 - [Go汇编笔记](https://blog.csdn.net/cyq6239075/article/details/106480140)
 - [理解 Golang 中函数调用的原理](https://studygolang.com/articles/19059)
+- [What is an ABI?](https://www.section.io/engineering-education/what-is-an-abi/)
+- [Linux用户态是如何使用FS寄存器引用glibc TLS的？](https://zhuanlan.zhihu.com/p/435756186)
+- [Using FS and GS segments in user space applications](https://www.kernel.org/doc/html/latest/x86/x86_64/fsgs.html)
