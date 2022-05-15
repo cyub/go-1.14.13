@@ -445,6 +445,28 @@ ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsysca
 
 ![CPU操作时延对比](https://static.cyub.vip/images/202107/instruction-cycle.png)
 
+## 字长
+
+字长是描述一个字(word)的长度的概念。在上面的[数据单元大小](#数据单元大小)中，介绍到在汇编中一个word(字)的长度是2个字节，也就是说字长是16位。
+
+其实word在不同语义环境下，含义是不一样的，我们在实际过程中需要注意区别：
+
+1. **processor word**：在CPU 架构语境中，word代表是CPU word，此处字长为处理器寄存器长度（a "processor word" refers to the size of a processor register），对于64位CPU，字长是64位，对于32位CPU，字长是32位。**我们在描述变量数据大小时应使用的是processor word**。例如，Go 内置的数据结构占用空间：
+    1. string (2 words)
+    2. slice (3 words)
+    3. interface (2 words)
+    4. map (1 word)
+    4. chan (1 word)
+    6. func (1 word)
+2. **Intel/AMD instruction set word**: 即汇编语境中word，上面已介绍过。
+
+
+
+
+
+
+
+
 #  Go 汇编
 
 ## 知识点
@@ -1015,3 +1037,4 @@ go build -gcflags="-N -l -S"  main.go
 - [What is an ABI?](https://www.section.io/engineering-education/what-is-an-abi/)
 - [Linux用户态是如何使用FS寄存器引用glibc TLS的？](https://zhuanlan.zhihu.com/p/435756186)
 - [Using FS and GS segments in user space applications](https://www.kernel.org/doc/html/latest/x86/x86_64/fsgs.html)
+- [How many bits does a WORD contain in 32/64 bit OS respectively?](https://stackoverflow.com/questions/5295903/how-many-bits-does-a-word-contain-in-32-64-bit-os-respectively)
