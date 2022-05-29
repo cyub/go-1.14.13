@@ -142,7 +142,283 @@ TLS 是线程本地存储 （Thread Local Storage ）的缩写。简单地说，
 
 在 Go 语言中，TLS 存储了一个 G 结构体的指针。这个指针所指向的结构体包括 Go 例程的内部细节。以AMD64为例，Go 在新建M时会调用arch_prctl这个syscall设置FS寄存器的值为M.tls的地址, 运行中每个M的FS寄存器都会指向它们对应的M实例的tls, linux内核调度线程时FS寄存器会跟着线程一起切换, 这样 Go 代码只需要访问FS寄存器就可以存取线程本地的数据。
 
+## sysmon监控线程
+
+Go Runtime 在启动程序的时候，会创建一个独立的 M 作为监控线程，称为 sysmon，它是一个系统级的 daemon 线程。这个sysmon 独立于 GPM 之外，也就是说不需要P就可以运行。sysmon监控线程的功能有：
+
+1. 用于网络轮询器中，唤醒准备就绪的fd关联的goroutine
+
+```go
+func sysmon() {
+	...
+	for {
+		...
+		// poll network if not polled for more than 10ms
+		lastpoll := int64(atomic.Load64(&sched.lastpoll))
+		if netpollinited() && lastpoll != 0 && lastpoll+10*1000*1000 < now {
+			atomic.Cas64(&sched.lastpoll, uint64(lastpoll), uint64(now))
+			list := netpoll(0) // 返回
+			if !list.empty() {
+				incidlelocked(-1)
+				injectglist(&list)
+				incidlelocked(1)
+			}
+		}
+		...
+	}
+}
+```
+
+2. 每隔2分钟强制GC一次
+
+```go
+func sysmon() {
+	...
+	for {
+		...
+		if t := (gcTrigger{kind: gcTriggerTime, now: now}); t.test() && atomic.Load(&forcegc.idle) != 0 {
+			lock(&forcegc.lock)
+			forcegc.idle = 0
+			var list gList
+			list.push(forcegc.g)
+			injectglist(&list)
+			unlock(&forcegc.lock)
+		}
+		...
+	}
+}
+```
+
+3. 抢占运行时间太长Goroutine以及handle off长时间运行系统调用的M
+
+当goroutine运行时间超过10ms时候，会将gp的两个字段分别设置为：`gp.preempt = true, gp.stackguard0 = stackPreempt`，那么当goroutine在发生栈扩容时候，会判断这个条件是否为true，若为true，则不进行扩容，而是休眠当前goroutine，实现抢占逻辑。这种方式做多算是半抢占式（也可称为协作式抢占调度）。
+
+如果当前M处于系统调用过程时候，此时`p.status == _Psyscall`，如果运行时间超过10ms，那么采用handle off策略，将M和P解绑，P重新找到空闲的M，执行任务，若没有空闲的M，则会创建一个。
+
+```go
+func sysmon() {
+	...
+	for {
+		...
+		if retake(now) != 0 {
+			idle = 0
+		} else {
+			idle++
+		}
+		...
+	}
+}
+
+const forcePreemptNS = 10 * 1000 * 1000 // 10ms
+func retake(now int64) uint32 {
+	n := 0
+	// Prevent allp slice changes. This lock will be completely
+	// uncontended unless we're already stopping the world.
+	lock(&allpLock)
+	// We can't use a range loop over allp because we may
+	// temporarily drop the allpLock. Hence, we need to re-fetch
+	// allp each time around the loop.
+	for i := 0; i < len(allp); i++ {
+		_p_ := allp[i]
+		if _p_ == nil {
+			// This can happen if procresize has grown
+			// allp but not yet created new Ps.
+			continue
+		}
+		pd := &_p_.sysmontick
+		s := _p_.status
+		sysretake := false
+		if s == _Prunning || s == _Psyscall {
+			// Preempt G if it's running for too long.
+			t := int64(_p_.schedtick)
+			if int64(pd.schedtick) != t {
+				pd.schedtick = uint32(t)
+				pd.schedwhen = now
+			} else if pd.schedwhen+forcePreemptNS <= now { // G运行时间太长了(超过10ms)
+				preemptone(_p_)
+				// In case of syscall, preemptone() doesn't
+				// work, because there is no M wired to P.
+				sysretake = true
+			}
+		}
+		if s == _Psyscall {
+			// Retake P from syscall if it's there for more than 1 sysmon tick (at least 20us).
+			t := int64(_p_.syscalltick)
+			if !sysretake && int64(pd.syscalltick) != t {
+				pd.syscalltick = uint32(t)
+				pd.syscallwhen = now
+				continue
+			}
+			// On the one hand we don't want to retake Ps if there is no other work to do,
+			// but on the other hand we want to retake them eventually
+			// because they can prevent the sysmon thread from deep sleep.
+			if runqempty(_p_) && atomic.Load(&sched.nmspinning)+atomic.Load(&sched.npidle) > 0 && pd.syscallwhen+10*1000*1000 > now {
+				continue
+			}
+			// Drop allpLock so we can take sched.lock.
+			unlock(&allpLock)
+			// Need to decrement number of idle locked M's
+			// (pretending that one more is running) before the CAS.
+			// Otherwise the M from which we retake can exit the syscall,
+			// increment nmidle and report deadlock.
+			incidlelocked(-1)
+			if atomic.Cas(&_p_.status, s, _Pidle) {
+				if trace.enabled {
+					traceGoSysBlock(_p_)
+					traceProcStop(_p_)
+				}
+				n++
+				_p_.syscalltick++
+				handoffp(_p_) // 
+			}
+			incidlelocked(1)
+			lock(&allpLock)
+		}
+	}
+	unlock(&allpLock)
+	return uint32(n)
+}
+
+func preemptone(_p_ *p) bool {
+	mp := _p_.m.ptr()
+	if mp == nil || mp == getg().m {
+		return false
+	}
+	gp := mp.curg
+	if gp == nil || gp == mp.g0 {
+		return false
+	}
+
+	gp.preempt = true
+
+	// Every call in a go routine checks for stack overflow by
+	// comparing the current stack pointer to gp->stackguard0.
+	// Setting gp->stackguard0 to StackPreempt folds
+	// preemption into the normal stack overflow check.
+	gp.stackguard0 = stackPreempt // 当gp.preempt = true 且 gp.stackguard0 = stackPreempt时，在goroutine栈扩容根据这两个条件之后，需要抢占该goroutine了
+
+	// Request an async preemption of this P.
+	if preemptMSupported && debug.asyncpreemptoff == 0 {
+		_p_.preempt = true
+		preemptM(mp)
+	}
+
+	return true
+}
+```
+
+4. 打印schedule trace信息
+
+```go
+func sysmon() {
+	...
+	for {
+		...
+		if debug.schedtrace > 0 && lasttrace+int64(debug.schedtrace)*1000000 <= now {
+			lasttrace = now
+			schedtrace(debug.scheddetail > 0)
+		}
+		...
+	}
+}
+```
+
+5. 定时器与滴答器的调度处理
+
+```go
+func sysmon() {
+	...
+	for {
+		...
+		usleep(delay)
+		now := nanotime()
+		next, _ := timeSleepUntil() // 最近要到期的定时器时间点
+		...
+
+		if next < now { // 定时器已到期，启动M执行
+			// There are timers that should have already run,
+			// perhaps because there is an unpreemptible P.
+			// Try to start an M to run them.
+			startm(nil, false)
+		}
+	}
+}
+```
+
+## 重要的全局变量
+
+```go
+var (
+	allglen    uintptr
+	allm       *m // 所有的M
+	allp       []*p  // len(allp) == gomaxprocs; may change at safe points, otherwise immutable 所有的P
+	allpLock   mutex // Protects P-less reads of allp and all writes
+	gomaxprocs int32 // p数量
+	ncpu       int32 // cpu核数
+	forcegc    forcegcstate
+	sched      schedt // 全局调度器
+	newprocs   int32
+
+	// Information about what cpu features are available.
+	// Packages outside the runtime should not use these
+	// as they are not an external api.
+	// Set on startup in asm_{386,amd64}.s
+	processorVersionInfo uint32
+	isIntel              bool
+	lfenceBeforeRdtsc    bool
+
+	goarm                uint8 // set by cmd/link on arm systems
+	framepointer_enabled bool  // set by cmd/link
+)
+
+// sched.midle// 空闲的M列表
+// sched.pidle // 空闲的P列表
+// sched.runq // 可运行的G列表
+// sched.npidle // 空闲的P个数
+// sched.nmspinning // 处于自旋状态的M个数。当工作线程在从其它工作线程的本地运行队列中盗取goroutine时，该工作线程的状态称为自旋状态
+```
+
+## 重要运行时函数
+
+```go
+// Implemented in runtime.
+func runtime_registerPoolCleanup(cleanup func())
+func runtime_procPin() int
+func runtime_procUnpin()
+```
+
+lock in runtime
+runtime 为了避免包的循环导入，在内部实现了一致性原语，并且封装了两套 mutex 。futex 版用于 linux 平台，sema 版用于 MacOS 和 Windows。这两套的主要区别是 futex 使用了 linux 的系统调用，sleep 操作使用 kernel 提供的服务，而不是 runtime 自己封装的 sleep。
+
+**Happen Before 语义继承图：**
+
+```
+                +----------+ +-----------+   +---------+
+                | sync.Map | | sync.Once |   | channel |
+                ++---------+++---------+-+   +----+----+
+                 |          |          |          |
+                 |          |          |          |
++------------+   | +-----------------+ |          |
+|            |   | |       +v--------+ |          |
+|  WaitGroup +---+ | RwLock|  Mutex  | |   +------v-------+
++------------+   | +-------+---------+ |   | runtime lock |
+                 |                     |   +------+-------+
+                 |                     |          |
+                 |                     |          |
+                 |                     |          |
+         +------+v---------------------v   +------v-------+
+         | LOAD | other atomic action  |   |runtime atomic|
+         +------+--------------+-------+   +------+-------+
+                               |                  |
+                               |                  |
+                  +------------v------------------v+
+                  |           LOCK prefix          |
+                  +--------------------------------+
+
+```
+
 ## 资料
 
 - [runtime hacking翻译](https://www.purewhite.io/2019/11/28/runtime-hacking-translate/)
+- [探索golang一致性原语](https://wweir.cc/post/%E6%8E%A2%E7%B4%A2-golang-%E4%B8%80%E8%87%B4%E6%80%A7%E5%8E%9F%E8%AF%AD/)
 
