@@ -677,7 +677,17 @@ gdb -iex 'echo 开始执行:\n' -ex "b main.main" -ex "run" -batch ./main
 
 # 设置exit/exit_group系统调用追踪点，然后运行程序，最后打印backtrace信息
 gdb -ex "catch syscall exit exit_group" -ex "run" -ex "bt" -batch ./main
+
+# 从文件中加载命令
+gdb -batch -x /tmp/cmds --args executablename arg1 arg2 arg3
 ```
+
+## GDB增强插件
+
+- [gdbinit](https://github.com/gdbinit/gdbinit)
+- [gdb-dashboard](https://github.com/cyrus-and/gdb-dashboard)
+- [pwndbg](https://github.com/pwndbg/pwndbg)
+- [peda](https://github.com/longld/peda)
 
 ## 资料
 
