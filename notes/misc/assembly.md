@@ -272,6 +272,24 @@ movq $123, %eax // 8 byte
 subl $0x05, %eax | R[eax] = R[eax] - 0x05
 subl %eax, -4(%ebp) | mem[R[ebp] -4] = mem[R[ebp] -4] - R[eax]
 subl -4(%ebp), %eax | R[eax] = R[eax] - mem[R[ebp] -4]
+test eax, ebx | 对于R[eax] 和R[ebx] 进行按位与操作
+
+test指令会对操作数进行按位与操作，并根据计算结果设置相应的标志寄存器：
+
+标志位 | 标志位名称 | =1 | =0
+--- | --- | --- | --
+CF | 进位标志/Carry Flag | CY/Carry/进位 | NC/No Carry/无进位
+PF | 奇偶标志/Parity Flag | PE/Parity Even/偶 | PO/Parity Odd/奇
+ZF | 零标志/Zero Flag | ZR/Zero/等于零 | NZ/Not Zero/不等于零
+SF | 符号标志/Sign Flag | NG/Negative/负 | PL/Positive/非负
+
+test一个常见用法是测试寄存器的值是为0或者非0：
+```assembly
+test eax, eax # 如果eax寄存器值为0，则ZF置为1，否则ZF值置为0
+jz 0x458891 # 如果ZF值为1时，jz指令才会跳到0x458891
+jnz 0x458875 # 如果ZF值为0时，jnz指令才会跳到0x458875
+je 0x458325 # 如果ZF值为1时，je指令才会跳到0x458325
+```
 
 #### 跳转指令
 
@@ -283,7 +301,7 @@ je location | 如果flags寄存器设置了相等标志，则跳转到location
 jg, jge, jl, gle, jnz, ... location | 如果flags寄存器设置了>, >=, <, <=, != 0等标志，则跳转到location
 
 
-#### 栈与地址管理指令
+#### 栈地址管理指令
 
 指令 | 含义 | 等同操作
 --- | --- | ---
@@ -305,6 +323,9 @@ leave | Restore the callers stack pointer
 **注意：** 以上指令分类并不规范和完整，比如`call`,`ret`都可以算作无条件跳转指令，这里面是按照功能放在函数调用这一分类了。完整指令分类可以参加百度百科[汇编指令](https://baike.baidu.com/item/%E6%B1%87%E7%BC%96%E6%8C%87%E4%BB%A4)条目。
 
 
+##### 断点指令
+
+断点指令，即**INT3指令**，它是专门用来软件调试的一条指令，对应的机器码是`0xCC`。INT3的含义是3号中断，INT是interrupt一词的缩写。GDB等调试工具就是通过此指令工作的，当我们打断点时候，**GDB会把设断点处的机器码指令的第一个字节改为0xCC(即INT3指令)，并把原字节保存起来**，当CPU执行到这条指令时候会产生中断异常，然后调用GDB提前注册的异常处理程序(通过ptrace系统调用实现)做进一步处理。
 
 ## 栈帧
 
