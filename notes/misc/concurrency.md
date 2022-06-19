@@ -1,8 +1,60 @@
-# 并发相关概述
+# 并发相关术语
 
 ## CAS
 
+CAS是Compare and Swap的缩写(或者Check and Swap)。CAS是一种无锁算法，它通过处理器的指令(CMPXCHG指令)来保证操作的原子性，它包含三个操作数：
+
+- 变量内存地址，V表示
+- 旧的预期值，A表示
+- 准备设置的新值，B表示
+
+当执行CAS指令时，只有当V等于A时，才会用B去更新V的值，否则就不会执行更新操作。
+
+CAS使用可以避免使用系统锁的开销，但它不是银弹，它主要存在以下3个问题：
+- ABA问题
+
+    由于CAS只关注最开始状态和最终的状态，无法处理中间状态，这有可能会造成信息丢失的问题。
+
+- 自旋时间不可预期，可能会导致开销大
+
+    在使用CAS实现自旋锁时候，没法知道自旋啥时候结束，这会CPU开销过大，有可能一直等待中。也就是说CAS实现了lock-free，但没法保证wait-free。
+
+- 只能保证1个共享变量的原子操作
+
+CAS常见应用是实现自旋锁(spin lock)，以及实现无锁数据结构，比如无锁队列，无锁栈。
+
 ## ABA
+
+ABA问题是使用CAS原语实现无锁数据结构中存在的问题。ABA问题的描述如下：
+
+假设两个线程T1和T2访问同一个变量V，当T1访问变量V时，读取到V的值为A；此时线程T1被抢占了，T2开始执行，T2先将变量V的值从A变成了B，然后又将变量V从B变回了A；此时T1又抢占了主动权，继续执行，它发现变量V的值还是A，以为没有发生变化，所以就继续执行了。这个过程中，变量V从A变为B，再由B变为A就被形象地称为ABA问题了。
+
+ABA案例：使用CAS+链表实现的无锁堆栈。
+
+假定无锁堆栈的栈顶为A，这时线程T1已经知道A.next为B（A-->B)：
+
+```java
+Node* currentNode = this->head; // A
+Node* nextNode = currentNode->next; // B
+```
+
+然后希望将栈顶A弹出去，只需使用CAS将A替换成B：
+
+```java
+this->head.compareAndSet(currentNode, nextNode);
+```
+
+在T1执行上面这条指令之前，线程T2介入，将A、B出栈，再依次push D、C、A，此时堆栈结构为(A-->C-->D)，而对象B此时处于游离状态。
+
+此时轮到线程T1执行CAS操作，检测发现栈顶仍为A，所以CAS成功，栈顶变为B，但实际上B.next为null，所以此时的情况变为堆栈中只有B一个元素，C和D组成的链表不再存在于堆栈中，平白无故就把C、D丢掉了。
+
+
+### 解决方案
+
+解决ABA办法可以采用[Hazard pointer](https://en.wikipedia.org/wiki/Hazard_pointer)。
+
+Java中提供了AtomicStampedReference和AtomicMarkableReference来解决ABA问题，它在原有类的基础上，除了比较与修改期待的值外，增加了一个时间戳。对时间戳也进行CAS操作。这也称为双重CAS。每次修改一个结点，其时间戳都发生变化。这样即使共享一个复用结点，最终CAS也能返回正常的结果。
+
 
 ## false sharing
 
@@ -38,6 +90,41 @@ public class FalseSharingPadding {
 
 伪共享问题一般是非常隐蔽的，在实际开发的过程中，并不是项目中所有地方都需要花费大量的精力去优化伪共享问题。CPU Cache 的填充本身也是比较珍贵的，我们应该把精力聚焦在一些高性能的数据结构设计上，把资源用在刀刃上，使系统性能收益最大化。
 
+## Lock Free vs Wait Free
+
+## Reentrant Lock
+
+Reentrant Lock(可重入锁)
+
+## Thread-safe
+
+Thread-safe(线程安全)
+
+## 强一致性与弱一致性
+
+一致性（Consistency）是指多副本（Replications）问题中的数据一致性。可以分为强一致性、弱一致性。
+
+### 强一致性
+
+强一致性也被可以被称做原子一致性（Atomic Consistency）或线性一致性（Linearizable Consistency），必须符合以下两个要求
+
+    - 任何一次读都能立即读到某个数据的最近一次写的数据
+
+    - 系统中的所有进程，看到的操作顺序，都和全局时钟下的顺序一致
+
+简单地说就是假定对同一个数据集合，分别有两个线程 A、B 进行操作，假定 A 首先进行了修改操作，那么从时序上在 A 这个操作之后发生的所有 B 的操作都应该能立即（或者说实时）看到 A 修改操作的结果。
+
+### 弱一致性
+
+与强一致性相对的就是弱一致性，即数据更新之后，如果立即访问的话可能访问不到或者只能访问部分的数据。如果 A 线程更新数据后 B 线程经过一段时间后都能访问到此数据，则称这种情况为最终一致性，最终一致性也是弱一致性，只不过是弱一致性的一种特例而已
+
+## 可见性与有序性
+
+造成一致性的原因的根本原因是可见性与有序性。
+
 ## 参考资料
 
 - [高性能无锁队列 Mpsc Queue](http://t.zoukankan.com/xiaojiesir-p-15562705.html)
+- [Compare-and-swap](https://en.wikipedia.org/wiki/Compare-and-swap)
+- [Java并发包提供了哪些并发工具类？](https://leeshengis.com/archives/9373)
+- [一文澄清网上对 ConcurrentHashMap 的一个流传甚广的误解!](https://www.cnblogs.com/xiekun/p/16375705.html)
