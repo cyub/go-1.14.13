@@ -460,6 +460,12 @@ vDSO 使用了标准的链接和加载技术，作为一个动态链接库，它
 ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
 ```
 
+### Linux C 调用约定
+
+1<sup>st</sup> parameter 	| 2<sup>nd</sup> parameter |	3<sup>rd</sup> parameter |	4<sup>th</sup> parameter |	5<sup>th</sup> parameter  |	6<sup>th</sup> parameter | result
+--- | --- | --- | --- | --- | --- | ---
+rdi |	rsi |	rdx  |	rcx |	r8 |	r9 | rax
+
 ## 指令周期
 
 指令周期（Instruction Cycle）指的CPU从内存取出一条指令并执行这条指令的时间总和。
@@ -480,13 +486,6 @@ ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsysca
     4. chan (1 word)
     6. func (1 word)
 2. **Intel/AMD instruction set word**: 即汇编语境中word，上面已介绍过。
-
-
-
-
-
-
-
 
 #  Go 汇编
 
@@ -1059,3 +1058,4 @@ go build -gcflags="-N -l -S"  main.go
 - [Linux用户态是如何使用FS寄存器引用glibc TLS的？](https://zhuanlan.zhihu.com/p/435756186)
 - [Using FS and GS segments in user space applications](https://www.kernel.org/doc/html/latest/x86/x86_64/fsgs.html)
 - [How many bits does a WORD contain in 32/64 bit OS respectively?](https://stackoverflow.com/questions/5295903/how-many-bits-does-a-word-contain-in-32-64-bit-os-respectively)
+- [x86 and amd64 instruction reference](https://www.felixcloutier.com/x86/)

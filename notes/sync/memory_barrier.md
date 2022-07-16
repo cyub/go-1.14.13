@@ -199,7 +199,50 @@ void bar(void)
 }
 ```
 
-## Memory Barrier
+## Memory Barrier（内存屏障)
+
+程序在运行时内存实际的访问顺序和程序代码编写的访问顺序不一定一致，这就是内存乱序访问。内存乱序访问行为出现的理由是为了提升程序运行时的性能。内存乱序访问主要发生在两个阶段：
+
+- 编译时，编译器优化导致内存乱序访问，也就是**指令重排**
+- 运行时，多 CPU 间交互引起**内存乱序**访问
+
+Memory Barrier 能够让 CPU 或编译器在内存访问上有序。一个 Memory Barrier 之前的内存访问操作必定先于其之后的完成。Memory Barrier 包括两类：
+
+- CPU Memory Barrier
+- 编译器Memory Barrier
+
+内存屏障的维基百科定义：
+
+> A memory barrier, also known as a membar, memory fence or fence instruction, is a type of barrier instruction that causes a central processing unit (CPU) or compiler to enforce an ordering constraint on memory operations issued before and after the barrier instruction.
+
+翻译过来就是：内存屏障是用来强制约束屏障指令前后内存操作顺序。现代 CPU 会采用乱序执行、流水线、分支预测、多级缓存等方法提高性能，但这些方法同时也影响了指令执行和生效的次序。这种乱序对单线程执行是无影响的，执行的结果与原指令顺序执行保持一致，但在多线程环境下则会造成非预期的行为
+
+### CPU 内存屏障
+
+在CPU乱序执行时，一个处理器真正执行指令的顺序由可用的输入数据决定，而非程序员编写的顺序。早期的处理器为有序处理器（In-order processors），有序处理器处理指令通常有以下几步：
+
+1. 指令获取
+2. 如果指令的输入操作对象（input operands）可用（例如已经在寄存器中了），则将此指令分发到适当的功能单元中。如果一个或者多个操作对象不可用（通常是由于需要从内存中获取），则处理器会等待直到它们可用
+3. 指令被适当的功能单元执行
+4. 功能单元将结果写回寄存器堆（Register file，一个 CPU 中的一组寄存器）
+
+相比之下，乱序处理器（Out-of-order processors）处理指令通常有以下几步：
+
+1. 指令获取
+2. 指令被分发到指令队列
+3. 指令在指令队列中等待，直到输入操作对象可用（一旦输入操作对象可用，指令就可以离开队列，即便更早的指令未被执行）
+4. 指令被分配到适当的功能单元并执行
+5. 执行结果被放入队列（而不立即写入寄存器堆）
+6. 只有所有更早请求执行的指令的执行结果被写入寄存器堆后，指令执行的结果才被写入寄存器堆（执行结果重排序，让执行看起来是有序的）
+
+从上面的执行过程可以看出，乱序执行相比有序执行能够避免等待不可用的操作对象（有序执行的第二步）从而提高了效率。现代的机器上，处理器运行的速度比内存快很多，有序处理器花在等待可用数据的时间里已经可以处理大量指令了。
+
+从上面的乱序处理器处理指令的过程，我们能得到几个结论：
+
+1. 对于单个 CPU 指令获取是有序的（通过队列实现）
+2. 对于单个 CPU 指令执行结果也是有序返回寄存器堆的（通过队列实现）
+
+也就是说UP(uniprocessor)系统下不存在CPU交互导致的内存乱序访问了，此时只需要考虑编译器导致的内存乱序访问。
 
 为了解决MESI协议中引入`Store buffer`和`Invalidate queue`导致的并发问题，缓存系统采用内存屏障机制解决相关问题。
 
@@ -211,15 +254,21 @@ void bar(void)
 
 - Load Barrier，读屏障
 
-    对应是lfence指令，在读指令前插入读屏障，可以让高速缓存中的数据失效，重新从主内存加载数据
+    对应是lfence指令，在读指令前插入读屏障，可以让高速缓存中的数据失效，重新从主内存加载数据。对应的代码为：
+
+    __asm__ __volatile__("lfence" : : : "memory");
 
 - Store Barrier，写屏障
 
-    对应是sfence指令，在写指令之后插入写屏障，能让写入缓存的最新数据写回到主内存
+    对应是sfence指令，在写指令之后插入写屏障，能让写入缓存的最新数据写回到主内存。对应的代码为：
+
+    __asm__ __volatile__("sfence" : : : "memory");
 
 - Full Barrier，读写屏障
 
-    对应是mfence指令，具备lfence和sfence的能力
+    对应是mfence指令，具备lfence和sfence的能力。
+
+    __asm__ __volatile__("mfence" : : : "memory");
 
 除了内存屏障外，Lock前缀指令能够完成类似内存屏障的功能。Lock会对CPU总线和高速缓存加锁，可以理解为CPU指令级的一种锁。它后面可以跟ADD, ADC, AND, BTC, BTR, BTS, CMPXCHG, CMPXCH8B, DEC, INC, NEG, NOT, OR, SBB, SUB, XOR, XADD, and XCHG等指令。
 
@@ -228,6 +277,89 @@ Lock前缀实现了类似的能力：
 - 它先对总线/缓存加锁，然后执行后面的指令，最后释放锁后会把高速缓存中的脏数据全部刷新回主内存
 
 - 在Lock锁住总线的时候，其他CPU的读写请求都会被阻塞，直到锁释放。Lock后的写操作会让其他CPU相关的cache line失效，从而从新从内存加载最新的数据。这个是通过缓存一致性协议做的
+
+### 编译器内存屏障
+
+编译器出于对代码做出优化的考虑，可能改变实际执行指令的顺序(这叫**指令重排**)，如果程序的逻辑依赖内存变量的访问顺序，那这时候就有可能会造成意向不到的后果。上面例子稍微改一下：
+
+```c
+// instruction_reorder.c
+#include <assert.h>
+
+int a = 0, b = 0, c = 1;
+
+void foo(void)
+{
+    a = c;
+    b = 1;
+}
+
+void bar(void)
+{
+    while (b == 0) continue;
+    assert(a == 1);
+}
+```
+
+首先我们不进行任何优化进行编译得到foo函数核心汇编代码：
+
+```assembly
+// gcc -S instruction_reorder.c -o instruction_reorder.s
+
+movl	c(%rip), %eax
+movl	%eax, a(%rip) // a = 1
+movl	$1, b(%rip) // b = 1
+```
+
+开启O2级别优化：
+
+```assembly
+// gcc -O2 -S instruction_reorder.c -o instruction_reorder_o2.s
+movl	c(%rip), %eax
+movl	$1, b(%rip) // b = 1
+movl	%eax, a(%rip) // a = 1
+```
+
+从上面可以看到当开启优化之后，发生了指令重排，导致b先被复制为1, a再接着赋值。如果此时另一个线程在a赋值之前执行bar时候，就会导致断言失败。
+
+
+### UP(单核)和SMP(多核)下的内存屏障
+
+Linux内核源码中支持的屏障如下：
+
+```c
+#define barrier() __asm__ __volatile__("" : : : "memory");
+
+#ifdef CONFIG_SMP // SMP系统
+#define smp_mb()    mb()
+#define smp_rmb()   rmb()
+#define smp_wmb()   wmb()
+
+#else // UP系统
+
+#define smp_mb()    barrier() // 只需要编译器屏障既可以。
+#define smp_rmb()   barrier()
+#define smp_wmb()   barrier()
+
+#endif
+
+#ifdef CONFIG_X86_32
+
+#define mb() alternative("lock; addl $0,0(%%esp)", "mfence", X86_FEATURE_XMM2) // 32位操作系统，不一定有xfence指令，那就使用lock前缀指令
+#define rmb() alternative("lock; addl $0,0(%%esp)", "lfence", X86_FEATURE_XMM2)
+#define wmb() alternative("lock; addl $0,0(%%esp)", "sfence", X86_FEATURE_XMM)
+
+#else
+
+#define mb()    asm volatile("mfence":::"memory")
+#define rmb()   asm volatile("lfence":::"memory")
+#define wmb()   asm volatile("sfence" ::: "memory")
+
+#endif
+```
+
+从上面可以看到UP系统只有编译器屏障。32位SMP系统使用lock前缀指令做CPU内存屏障，64位SMP系统使用xfench做CPU内存屏障。
+
 
 ## Cache Line
 
@@ -256,3 +388,4 @@ CPU获取的内存地址在cache中存在，叫做cache hit。
 - [伪共享(False Sharing)](http://ifeve.com/falsesharing/)
 - [Data alignment: Straighten up and fly right](https://developer.ibm.com/technologies/systems/articles/pa-dalign/)
 - [Memory Barriers:  a Hardware View for Software Hackers](http://www.puppetmastertrading.com/images/hwViewForSwHackers.pdf)
+- [一文讲解，Linux内核——Memory Barrier（内存屏障）](https://zhuanlan.zhihu.com/p/498449295)
