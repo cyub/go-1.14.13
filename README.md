@@ -1,6 +1,6 @@
 # Golang 源码分析
 
-Golang版本是go1.14.13
+Golang版本是go1.14.13。相关电子书：[《深入Go语言之旅》](https://go.cyub.vip/)。
 
 ## 目录
 
@@ -57,3 +57,4 @@ Golang版本是go1.14.13
 	- [ ] [runtime.mutex](./notes/misc/runtime_mutex.md)
 	- [ ] [Delve工作机制](./notes/misc/delve.md)
 	- [ ] [内存对齐与填充](./notes/misc/data_alignment.md)
+	- [ ] [并发术语](./notes/misc/concurrency.md)
