@@ -27,7 +27,36 @@ gdb ./hello #  使用gdb开始调试
 
 进入gdb调试界面后，我们接着输入`info files`命令来获取程序相关信息，其中就包括程序入口地址，接下来打断点，然后运行起来应用。
 
-我们可以看到程序的入口函数是`_rt0_amd64`：
+```
+(gdb) info files
+Symbols from "/home/ubuntu/go-1.14.13/notes/bootstrap/hello".
+Local exec file:
+	`/home/ubuntu/go-1.14.13/notes/bootstrap/hello', file type elf64-x86-64.
+	Entry point: 0x45cd80
+	0x0000000000401000 - 0x000000000045ed36 is .text
+	0x000000000045f000 - 0x000000000048bdb6 is .rodata
+	0x000000000048bf40 - 0x000000000048c3e0 is .typelink
+	0x000000000048c3e0 - 0x000000000048c3e8 is .itablink
+	0x000000000048c3e8 - 0x000000000048c3e8 is .gosymtab
+	0x000000000048c400 - 0x00000000004c7cd8 is .gopclntab
+	0x00000000004c8000 - 0x00000000004c8020 is .go.buildinfo
+	0x00000000004c8020 - 0x00000000004c9240 is .noptrdata
+	0x00000000004c9240 - 0x00000000004cb3d0 is .data
+	0x00000000004cb3e0 - 0x00000000004f86b0 is .bss
+	0x00000000004f86c0 - 0x00000000004fd990 is .noptrbss
+	0x0000000000400f9c - 0x0000000000401000 is .note.go.buildid
+(gdb) b *0x45cd80
+Breakpoint 1 at 0x45cd80: file /usr/local/go/src/runtime/rt0_linux_amd64.s, line 8.
+(gdb) list /usr/local/go/src/runtime/rt0_linux_amd64.s:8
+3	// license that can be found in the LICENSE file.
+4
+5	#include "textflag.h"
+6
+7	TEXT _rt0_amd64_linux(SB),NOSPLIT,$-8
+8		JMP	_rt0_amd64(SB)
+```
+
+程序的入口地址是**0x45cd80**，我们在入口地址处打上断点，需要注意的是给地址打断点需要在地址前面加上*号。查看入口地址处代码，我们可以看到程序的入口函数是`_rt0_amd64`：
 ```
 TEXT _rt0_amd64(SB),NOSPLIT,$-8
 	MOVQ	0(SP), DI	// argc
@@ -37,8 +66,52 @@ TEXT _rt0_amd64(SB),NOSPLIT,$-8
 
 `_rt0_amd64`函数做两件事，第一件是将程序启动命令参数信息argc，argv分别保存到DI和SI寄存器中，第二件事情是使用JMP指令跳到`runtime·rt0_go`函数。在Go汇编章节，我们介绍了JMP指令，它会隐式的更改IP寄存器值，使其指向JMP指令要跳转的函数入口地址，那么程序下次执行就会从该函数开始执行。
 
-## g0初始化工作
+argc 和 argv分别是程序启动的参数个数和参数数组。这个和c程序中main函数启动时候的argc和argv是一致的。
 
+```c
+include <stdio.h>
+
+int main(int argc, char *argv[])
+{
+    int i;
+    for (i=0; i < argc; i++)
+        printf("Argument %d is %s.\n", i, argv[i]);
+
+    return 0;
+}
+```
+
+借助GDB验证下，我们验证下这两个参数的值：
+```
+(gdb) list runtime/asm_amd64.s:17
+12	// kernel for an ordinary -buildmode=exe program. The stack holds the
+13	// number of arguments and the C-style argv.
+14	TEXT _rt0_amd64(SB),NOSPLIT,$-8
+15		MOVQ	0(SP), DI	// argc
+16		LEAQ	8(SP), SI	// argv
+17		JMP	runtime·rt0_go(SB)
+18
+19	// main is common startup code for most amd64 systems when using
+20	// external linking. The C startup code will call the symbol "main"
+21	// passing argc and argv in the usual C ABI registers DI and SI.
+(gdb) b runtime/asm_amd64.s:17
+Breakpoint 2 at 0x459869: file /usr/local/go/src/runtime/asm_amd64.s, line 17.
+(gdb) c
+Continuing.
+
+Breakpoint 2, _rt0_amd64 () at /usr/local/go/src/runtime/asm_amd64.s:17
+17		JMP	runtime·rt0_go(SB)
+(gdb) p $rdi
+$1 = 1
+(gdb) x /xg $rsi
+0x7fffffffe418:	0x00007fffffffe672
+(gdb) x /s 0x00007fffffffe672
+0x7fffffffe672:	"/home/ubuntu/go-1.14.13/notes/bootstrap/hello"
+```
+
+我们可以看到rdi寄存器存储的参数个数确实是1，rsi指向的参数数组，其第一个参数确实是启动命令。
+
+## g0初始化工作
 
 Go运行时有两个全局变量m0和g0，分别代表着进程的主线程，以及主线程的系统调用栈。
 
