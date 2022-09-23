@@ -120,14 +120,15 @@ TEXT runtime·rt0_go(SB),NOSPLIT,$0
 	// copy arguments forward on an even stack
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
-	SUBQ	$(4*8+7), SP		// 2args 2auto
-	ANDQ	$~15, SP
+	SUBQ	$(4*8+7), SP // 2args 2auto; 其中2*8栈空间用来临时保存argc和argv参数的，另外2*8空间用来存放后面runtime·args函数的参数(callee的参数栈空间是由caller提供的)
+	ANDQ	$~15, SP // 等效于 and rsp,0xfffffffffffffff0; $~15表示的是将15按位取反后的立即数，然后和SP寄存器值进行与运算，最后将寄存器值保存到SP寄存器中。
+	// 这么操作目的保证SP地址是16位对齐的，也可以说成保证SP地址是16的倍数。
 	MOVQ	AX, 16(SP)
 	MOVQ	BX, 24(SP)
 
 	// 初始化g0操作
 	MOVQ	$runtime·g0(SB), DI // 将全局g0保存到DI寄存器中
-	LEAQ	(-64*1024+104)(SP), BX
+	LEAQ	(-64*1024+104)(SP), BX // g0栈空间大小为64k-104
 	MOVQ	BX, g_stackguard0(DI) // 设置全局g0的stackguard0和stackguard1
 	MOVQ	BX, g_stackguard1(DI)
 	MOVQ	BX, (g_stack+stack_lo)(DI) // 设置全局g0的lo和hi
@@ -201,6 +202,49 @@ TEXT runtime·rt0_go(SB),NOSPLIT,$0
 4. 调用runtime.newproc，根据runtime.main函数生成第一个goroutine，即main goroutine。
 
 5. 调用runtime.mstart循环执行调度流程
+
+
+### 本地化存储
+
+本地化存储是由汇编实现的：
+
+```go
+// runtime/sys_linux_amd64.s
+#define SYS_arch_prctl		158
+
+TEXT runtime·settls(SB),NOSPLIT,$32
+#ifdef GOOS_android
+	// Android stores the TLS offset in runtime·tls_g.
+	SUBQ	runtime·tls_g(SB), DI
+#else
+	ADDQ	$8, DI	// DI保存是m0.tls[0]地址, 现在将该地址加8，此后DI保存的是m0.tls[1]的地址。
+#endif
+	MOVQ	DI, SI // arch_prctl系统调用的第二个参数是m0.tls[1]的地址
+	MOVQ	$0x1002, DI	// arch_prctl系统调用的第一个参数是：ARCH_SET_FS
+	MOVQ	$SYS_arch_prctl, AX
+	SYSCALL // 调用系统调用arch_prctl
+	CMPQ	AX, $0xfffffffffffff001
+	JLS	2(PC)
+	MOVL	$0xf1, 0xf1  // crash
+	RET
+```
+
+上面汇编中通过arch_prctl系统调用设置段寄存器fs指向了m0.tls[1]，本地变量的读取是通过get_tls(BX)和g(BX)来读取。
+
+```
+get_tls(BX)
+MOVQ $0x123, g(BX)
+```
+
+注意是get_tls是伪汇编代码，只是提示编译器开始使用本地存储。上面go汇编代码最终的实际汇编如下：
+
+```
+movq   $0x123, %fs:0xfffffffffffffff8
+```
+
+`%fs:0xfffffffffffffff8` 等价于%fs - 8（-8的补码是0xfffffffffffffff8），由于fs存储的是m0.tls[1], 那么`%fs:0xfffffffffffffff8`指向的就是m0.tls[0]。
+
+
 
 ### 调度器初始化
 
