@@ -160,6 +160,12 @@ golang.org/x/sys/cpu
 $ go clean -modcache
 ```
 
+在开启 Go 模块情况下我们提交`go.mod` 和 `go.sum`到仓库里面可以保证最终的依赖都一样。有时候可能由于服务器网络的限制原因，无法下载依赖的包，这时候我们可以本地生成`vendor`，把所有依赖都保存到`vendor`目录下，并提交到仓库，那么别人再编译时候就不用再次下载依赖的包：
+
+```shell
+$ go mod vendor
+```
+
 ### 重构代码
 
 你可能熟悉使用 `gofmt` 工具。它可以自动格式化代码，但是它也支持去**重写规则**。你可以使用它来帮助重构代码。我将在下面证明这一点。
@@ -201,6 +207,17 @@ $ gofmt -w -r 'strings.Replace(a, b, c, -1) -> strings.ReplaceAll(a, b, c)' .
 
 在重写规则中，单个小写字符用作匹配任意表达式的通配符，这些被匹配到的表达式将会被替换。
 
+### 修复import语句
+
+有时候由于漏掉了导入某个包，导致编译失败，这个时候我们可以使用`goimports`工具自动导入未导入的包。`goimports`工具包含了`gofmt`的全部功能，我们可以使用`goimports`代替`gofmt`：
+
+```
+$ go install golang.org/x/tools/cmd/goimports@latest # go1.16及以上版本安装goimports
+$ cd $(mktemp -d); GO111MODULE=on go get golang.org/x/tools/cmd/goimports@latest # go1.16以下版本安装goimports
+$ goimports main.go # 输出内容到标准输出
+$ goimports -w main.go # 就地更改文件内容
+```
+
 ### 查看 Go 文档
 
 你可以使用 `go doc` 工具，在终端中查看标准库的文档。我经常在开发过程中使用它来快速查询某些东西 —— 比如特定功能的名称或签名。我觉得这比浏览[网页文档](https://golang.org/pkg)更快，而且它可以离线查阅。
@@ -211,12 +228,20 @@ $ go doc -all strings       # 查看 string 包的完整版文档
 $ go doc strings.Replace    # 查看 strings.Replace 函数的文档
 $ go doc sql.DB             # 查看 database/sql.DB 类型的文档 
 $ go doc sql.DB.Query       # 查看 database/sql.DB.Query 方法的文档
+$ go doc encoding/json Marshal # 查看encoding/json 包下面的Marshal方法的文档
 ```
 
 你也可以使用 `-src` 参数来展示相关的 Go 源码。例如：
 
 ```shell
 $ go doc -src strings.Replace   # 查看 strings.Replace 函数的源码
+```
+
+你可以使用`godoc`命令启动一个文档的Web服务器，默认端口是6060，你可以使用`-http`选项更改端口：
+
+```shell
+$ go get golang.org/x/tools/cmd/godoc # 下载godoc
+$ godoc -http=:6060 # 启动web服务器
 ```
 
 ## 测试
@@ -386,6 +411,12 @@ $ go vet ./foo/bar  # 对 ./foo/bar 目录下的所有文件进行静态分析
 $ go vet -composites=false ./...
 ```
 
+如果你只想执行特定检查器，你可以将该检查器选项设置为true：
+
+```shell
+$ go vet -printf=true ./...
+```
+
 在 [golang.org/x/tools](https://godoc.org/golang.org/x/tools) 中有几个实验性的分析器，你可能想尝试一下：
 
 - [nilness](https://godoc.org/golang.org/x/tools/go/analysis/passes/nilness/cmd/nilness)：检查多余或不可能的零比较
@@ -526,6 +557,15 @@ $ go build -gcflags="-m -m" -o=/tmp/foo . # 打印优化决策信息
 ```
 
 在上面的例子中，我两次使用了 `-m` 参数，这表示我想打印两级深度的决策信息。如果只使用一个，就可以获得更简单的输出。
+
+如果你想打印出Go文件的对应汇编代码，你可以使用`-S`选项：
+
+```shell
+$ go tool compile -S main.go # 打印出main.go对应的汇编代码
+$ go tool compile -N -l -S main.go # 打印出禁止优化，禁止内联情况的下的汇编代码
+```
+
+`go tool compile -N -l -S xxx.go`也可以使用`go build -gcflags="-N -l -S" xxx.go`替代。
 
 此外，从 Go 1.10 开始，编译器参数仅适用于传递给 `go build` 的特定包 —— 在上面的示例中，它是当前目录中的包（由 `.` 表示）。如果要为所有包（包括依赖项）打印优化决策信息，可以使用以下命令：
 
@@ -695,7 +735,10 @@ $ go tool trace /tmp/trace.out
 我之前谈过在测试期间使用 `go test -race` 启用 Go 的竞争检测。但是，你还可以在构建可执行文件时启用它来运行程序，如下所示：
 
 ```shell
+$ go test -race ./...
 $ go build -race -o=/tmp/foo .
+$ go run -race main.go
+$ go install -race ./...
 ```
 
 尤其重要的是，启用竞争检测的二进制文件将使用比正常情况更多的 CPU 和内存，因此在正常情况下为生产环境构建二进制文件时，不应使用 `-race` 参数。
@@ -720,7 +763,15 @@ github.com/alecthomas/chroma v0.6.2 [v0.6.3]
 这将输出你当前正在使用的依赖项名称和版本，如果存在较新的版本，则输出方括号 `[]` 中的最新版本。你还可以使用 `go list` 来检查所有依赖项（和子依赖项）的更新，如下所示：
 
 ```shell
-$ go list -m -u all
+$ go list -m -u all # 检查所有依赖的更新
+$ go list -m -u github.com/fsnotify/fsnotify # 检查指定包的更新
+$ go list -mod=mod -m -u all # 支持vendor形式的更新
+```
+
+如果想查看当前项目的包名以及所有子包名称，可以使用下面的命令：
+
+```shell
+$ go list ./...
 ```
 
 你可以使用 `go get` 命令将依赖项升级到最新版本、调整为特定 tag 或 hash 的版本，如下所示：
@@ -731,7 +782,7 @@ $ go get github.com/foo/bar@v1.2.3
 $ go get github.com/foo/bar@7e0369f
 ```
 
-如果你要更新的依赖项具有 `go.mod` 文件，那么根据此 `go.mod` 文件中的信息，如果需要，还将下载对任何**子依赖项**的更新。如果使用 `go get -u` 参数，`go.mod` 文件的内容将被忽略，所有子依赖项将升级到最新的 minor/patch 版本，即使已经在 `go.mod` 中指定了不同的版本。
+如果你要更新的依赖项具有 `go.mod` 文件，那么根据此 `go.mod` 文件中的信息，如果需要，还将下载对任何**子依赖项**的更新。如果使用 `go get -u` 参数，`go.mod` 文件的内容将被忽略，所有子依赖项将升级到最新的 minor/patch 版本，即使已经在 `go.mod` 中指定了不同的版本。如果使用`go get -d`参数，只会下载包。
 
 在升级或降级任何依赖项后，最好整理你的 modfiles。你可能还希望为所有程序包运行测试以帮助检查不兼容性。像这样：
 
