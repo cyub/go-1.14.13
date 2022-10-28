@@ -49,7 +49,7 @@
 
 这篇文章中，我将主要关注 go 命令这部分。但这里也将提到一些不属于 Go 12.2 标准发行版的内容。
 
-当你在 Go 12.2 版本下安装命令时，你首先需要确保当前在 module-enabled 的目录**之外**（我通常跳转到 `/tmp` 目录下）。之后你可以使用 `GO111MODULE=on go get` 命令来安装。例如：
+当你在 Go 12.2 版本下安装命令时，你首先需要确保当前在 module-enabled 的目录之外（我通常跳转到 `/tmp` 目录下）。之后你可以使用 `GO111MODULE=on go get` 命令来安装。例如：
 
 ```shell
 $ cd /tmp
@@ -140,7 +140,7 @@ $ go get github.com/foo/bar@8e1b8d3
 ```shell
 $ go list -m all
 ```
-有时候你可能会想知道**为什么它是一个依赖？**你可以使用 `go mod why` 命令回答这个问题。这条命令会显示从主模块的包到给定依赖项的最短路径。例如：
+有时候你可能会想知道 **为什么它是一个依赖？** 你可以使用 `go mod why` 命令回答这个问题。这条命令会显示从主模块的包到给定依赖项的最短路径。例如：
 
 ```shell
 $ go mod why -m golang.org/x/sys
@@ -277,7 +277,7 @@ $ go test -coverprofile=/tmp/profile.out ./...
 $ go tool cover -html=/tmp/profile.out
 ```
 
-![](https://www.alexedwards.net/static/images/tooling-1.png)
+![](https://static.cyub.vip/images/202210/go-tool-1.png)
 
 这将为你提供所有测试文件的可导航列表，其中绿色代码是被测试覆盖到的，红色代码未被测试覆盖。
 
@@ -290,7 +290,7 @@ $ go tool cover -html=/tmp/profile.out
 
 在浏览器中查看时，更频繁执行的语句以更饱和的绿色阴影显示，类似于：
 
-![](https://www.alexedwards.net/static/images/tooling-2.png)
+![](https://static.cyub.vip/images/202210/go-tool-2.png)
 
 注意：如果你在测试中使用了 `t.Parallel()` 命令，你应该用 `-covermode=atomic` 替换掉 `-covermode=count` 以确保计数准确。
 
@@ -650,13 +650,13 @@ $ go test -run=^$ -bench=^BenchmarkFoo$ -o=/tmp/foo.test -cpuprofile=/tmp/cpupro
 $ go tool pprof -http=:5000 /tmp/cpuprofile.out
 ```
 
-![](https://www.alexedwards.net/static/images/tooling-3.png)
+![](https://static.cyub.vip/images/202210/go-tool-3.png)
 
 这将默认显示**图表**，显示应用程序的采样方面的执行树，这使得可以快速了解任何“热门”使用资源。在上图中，我们可以看到 CPU 使用率方面的热点是来自 `ioutil.ReadFile()` 的两个系统调用。
 
 你还可以导航到配置文件的其他**视图**，包括功能和源代码的最高使用情况。
 
-![](https://www.alexedwards.net/static/images/tooling-4.png)
+![](https://static.cyub.vip/images/202210/go-tool-4.png)
 
 如果信息量太大，你可能希望使用 `--nodefraction` 参数来忽略占小于一定百分比样本的节点。例如，要忽略在少于 10% 的样本中出现的节点，你可以像这样运行 `pprof`：
 
@@ -664,7 +664,7 @@ $ go tool pprof -http=:5000 /tmp/cpuprofile.out
 $ go tool pprof --nodefraction=0.1 -http=:5000 /tmp/cpuprofile.out
 ```
 
-![](https://www.alexedwards.net/static/images/tooling-5.png)
+![](https://static.cyub.vip/images/202210/go-tool-5.png)
 
 这让图形更加“嘈杂”，如果你[放大这个截图](https://www.alexedwards.net/static/images/tooling-5b.svg)，就可以更清楚的看到和了解 CPU 使用的热点位置。
 
@@ -686,7 +686,7 @@ $ go tool trace /tmp/trace.out
 
 重要提示：目前只能在 Chrome/Chromium 中查看。
 
-![](https://www.alexedwards.net/static/images/tooling-6.png)
+![](https://static.cyub.vip/images/202210/go-tool-6.png)
 
 有关 Go 的执行跟踪器以及如何解释输出的更多信息，请参阅 [Rhys Hiltner 的 dotGo 2016 演讲](https://www.youtube.com/watch?v=mmqDlbWk_XA)和[优秀博客文章](https://making.pusher.com/go-tool-trace/)。
 
