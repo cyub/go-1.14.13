@@ -18,6 +18,7 @@ Golang版本是go1.14.13。相关电子书：[《深入Go语言之旅》](https:
 	- [x] [Pool](./notes/sync/pool.md)
 	- [ ] [Mutex](./notes/sync/mutex.md)
 	- [ ] [Cond](./notes/sync/cond.md)
+	- [x] [RWMutex](./notes/sync/rwmutex.md)
 	- [x] [同步机制](./notes/sync/method.md)
 - 内存管理
 	- [ ] [内存分配管理](./notes/memory/memory_allocator.md)
