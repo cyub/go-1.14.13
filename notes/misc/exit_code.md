@@ -22,3 +22,7 @@
 - 超出范围的退出值可能导致意外的退出代码。大于 255 的退出值返回一个退出代码模数 256。例如，exit 3809 给出一个退出代码 225（3809％256 = 225）。
 
 - /usr/include/sysexits.h 的更新分配了先前未使用的退出代码从 64-78。可以预期未分配退出代码的范围将在将来进一步限制。本文档的作者不会对脚本示例进行修复以符合不断变化的标准。这不应该造成任何问题，因为在编译的 C/C++ 二进制文件和 shell 脚本之间的退出代码使用中不存在重叠或冲突。
+
+## 来源
+
+- [Advanced Bash-Scripting Guide：Appendix E. Exit Codes With Special Meanings](https://tldp.org/LDP/abs/html/exitcodes.html)
