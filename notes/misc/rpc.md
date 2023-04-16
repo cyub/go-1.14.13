@@ -6,9 +6,15 @@ RPC是Remote Procedure Call的简称，通过RPC客户端像调用本地函数�
 
 Go 标准包net/rpc提供了对RPC的支持，目前该包处于维护状态，不再接受新特性。该包支持的特性如下：
 
-网络协议 | 编码解码 | 同步 | 异步 
---- | --- | --- | ---
-TCP/HTTP | Gob/json | ✅ | ✅
+特性 | Go rpc | Gorilla rpc 
+--- | --- | ---
+TCP协议 | ✅ | ❎
+HTTP协议 | ✅ | ✅
+同步调用 | ✅ | ✅
+异步调用 | ✅ | ✅
+encoding/gob编码 | ✅ | ✅
+json-rpc | ✅ | ✅
+
 
 Go内置RPC默认使用encode/gob进行传输内容的编码和解码，此外还支持json编码和解码，它大致实现json-rpc v2.0功能。
 
@@ -205,3 +211,7 @@ func main() {
 	}
 }
 ```
+
+## 资料
+
+- [关于HTTP CONNECT方法](https://www.zhihu.com/tardis/bd/art/533663637)
