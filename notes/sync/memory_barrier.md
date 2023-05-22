@@ -345,7 +345,7 @@ Linux内核源码中支持的屏障如下：
 
 #ifdef CONFIG_X86_32
 
-#define mb() alternative("lock; addl $0,0(%%esp)", "mfence", X86_FEATURE_XMM2) // 32位操作系统，不一定有xfence指令，那就使用lock前缀指令
+#define mb() alternative("lock; addl $0,0(%%esp)", "mfence", X86_FEATURE_XMM2) // 32位操作系统，不一定有xfence指令(Pentium4引入)，那就使用lock前缀指令
 #define rmb() alternative("lock; addl $0,0(%%esp)", "lfence", X86_FEATURE_XMM2)
 #define wmb() alternative("lock; addl $0,0(%%esp)", "sfence", X86_FEATURE_XMM)
 
