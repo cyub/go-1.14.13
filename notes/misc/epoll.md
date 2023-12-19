@@ -88,7 +88,9 @@ epoll对文件描述符有两种操作模式
 
     ET模式下，只要epoll_wait函数检测到事件发生，通知应用程序立即进行处理，后续的epoll_wait函数将不再检测此事件。因此ET模式在很大程度上降低了同一个事件被epoll触发的次数，因此效率比LT模式高。ET只支持no_block socket。
 
-ET是状态变化的通知，即从没有数据转到有数据会通知，LT是数据变化的通知，即有数据就通知，没数据就不通知。对于ET模式，当接收到通知后，应该一直read循环读取，直到返回EWOULDBLCOCK或EAGIN，这样内部状态才会从有数据再次转为无数据，从而为下一次数据的到来做准备。
+**ET是状态变化的通知，即从没有数据转到有数据会通知，LT是数据变化的通知，即有数据就通知，没数据就不通知**。对于ET模式，当接收到通知后，应该一直read循环读取，直到返回EWOULDBLCOCK或EAGIN，这样内部状态才会从有数据再次转为无数据，从而为下一次数据的到来做准备。
+
+对于ET状态应该注意防止恶意请求连接，防止其一直请求，造成其他请求饿死。
 
 ## epoll 优缺点
 
@@ -1372,7 +1374,7 @@ func setKeepAlive(fd *netFD, keepalive bool) error {
 }
 
 // setKeepAlivePeriod函数中没有设置tcp_keepalive_probes，
-// 但将tcp_keepalive_intvl和tcp_keepalive_time设置为相同值，这相当于设置tcp_keepalive_probes=1。
+// 但将tcp_keepalive_intvl和tcp_keepalive_time设置为相同值，这相当于设置tcp_keepalive_probes=net.ipv4.tcp_keepalive_probes+1。
 func setKeepAlivePeriod(fd *netFD, d time.Duration) error {
 	// The kernel expects seconds so round to next highest second.
 	secs := int(roundDurationUp(d, time.Second))
