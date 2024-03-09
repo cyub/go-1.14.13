@@ -75,22 +75,30 @@ epoll_wait用于等待事件的产生。epoll_wait一共有4个参数：
 - epfd是 epoll的描述符
 - events则是分配好的 epoll_event结构体数组，epoll将会把发生的事件复制到 events数组中
 - maxevents表示本次可以返回的最大事件数目，maxevents参数与预分配的events数组的大小是相等的
-- timeout表示在没有检测到事件发生时最多等待的时间（单位为毫秒），如果 timeout为0，则表示 epoll_wait在 rdllist链表中为空，立刻返回，不会等待
+- timeout表示在没有检测到事件发生时最多等待的时间（单位为毫秒），如果timeout为0，则表示 epoll_wait在 rdllist链表中为空，立刻返回，不会等待，-1表示永久等待，直到有事件发生返回。
 
 ## 两种操作模式
 
 epoll对文件描述符有两种操作模式
 
-- LT（level trigger水平模式）
+- LT（Level Trigger水平模式）
 
-    LT是epoll的默认操作模式，当epoll_wait函数检测到有事件发生并将通知应用程序，而应用程序不一定必须立即进行处理，这样epoll_wait函数再次检测到此事件的时候还会通知应用程序，直到事件被处理。LT支持blocksocket和no_blocksocket。
-- ET（edge trigger边缘模式）
+    LT是epoll的默认操作模式，当epoll_wait函数检测到有事件发生并将通知应用程序，而应用程序不一定必须立即进行处理，这样epoll_wait函数再次检测到此事件的时候还会通知应用程序，直到事件被处理。LT支持阻塞的套接字和非阻塞的套接字。
+- ET（Edge Trigger边缘模式）
 
-    ET模式下，只要epoll_wait函数检测到事件发生，通知应用程序立即进行处理，后续的epoll_wait函数将不再检测此事件。因此ET模式在很大程度上降低了同一个事件被epoll触发的次数，因此效率比LT模式高。ET只支持no_block socket。
+    ET模式下，只要epoll_wait函数检测到事件发生，通知应用程序立即进行处理，后续的epoll_wait函数将不再检测此事件。因此ET模式在很大程度上降低了同一个事件被epoll触发的次数，因此效率比LT模式高。**ET只支持非阻塞的套接字**。
 
-**ET是状态变化的通知，即从没有数据转到有数据会通知，LT是数据变化的通知，即有数据就通知，没数据就不通知**。对于ET模式，当接收到通知后，应该一直read循环读取，直到返回EWOULDBLCOCK或EAGIN，这样内部状态才会从有数据再次转为无数据，从而为下一次数据的到来做准备。
+**ET是状态变化的通知，即从没有数据转到有数据会通知，LT是数据变化的通知，即有数据就通知，没数据就不通知**。对于ET模式，当接收到通知后，应该一直read循环读取，直到返回EWOULDBLOCK或EAGAIN，这样内部状态才会从有数据再次转为无数据，从而为下一次数据的到来做准备，否则只有对端再次发送数据时候，才会再次触发可读事件。
 
 对于ET状态应该注意防止恶意请求连接，防止其一直请求，造成其他请求饿死。
+
+## ET模式下的EPOLLOUT事件的处理
+
+考虑客户端请求服务端大文件的场景，当客户端EPOLLIN事件发生时候，我们write一个1G的大文件给客户端，但write一次最多也只能发送**最大socket写缓冲大小**的文件内容给客户端，立即再次write时候，会返回EAGAIN错误（写缓冲区满了，没法再接受数据了）。为了避免轮询write造成的资源空耗的这情况，我们可以使用EPOLLOUT事件，处理逻辑如下：
+
+1. 当EPOLLIN事件过来后，调用write发送数据, 如果返回值大于0，如果数据没有发完，则继续发送
+2. 如果write小于0，且errno等于EAGAIN，此时说明发送缓冲区满了. 那么需要把剩余的待发送数据保存起来，然后注册EPOLLOUT，直到epoll_wait返回EPOLLOUT事件, 那么说明发送缓冲区可写了, 则再发送之前保存起来的数据，如果此时write 返回值大于0，且数据都发送完了，那么就可以把EPOLLOUT事件取消掉. 
+
 
 ## epoll 优缺点
 
@@ -108,163 +116,180 @@ epoll对文件描述符有两种操作模式
 
 ## epoll服务端代码示例
 
-```c++
-#include <iostream>
-#include <sys/socket.h>
-#include <sys/epoll.h>
-#include <netinet/in.h>
+```c
+/**
+	echo服务器
+*/
 #include <arpa/inet.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdio.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
-using namespace std;
+#define MAX_EVENTS 10
+#define MAX_LINE 30
+#define LISTEN_BACKLOG 128
 
-#define MAXLINE 5
-#define OPEN_MAX 100
-#define LISTENQ 20
-#define SERV_PORT 5000
-#define INFTIM 1000
+int set_non_blocking(int fd) {
+  int oldopt;
+  if ((oldopt = fcntl(fd, F_GETFL)) < 0) {
+    return -1;
+  }
 
-void setnonblocking(int sock)
-{
-    int opts;
-    opts=fcntl(sock,F_GETFL);
-    if(opts<0)
-    {
-        perror("fcntl(sock,GETFL)");
-        exit(1);
-    }
-    opts = opts|O_NONBLOCK;
-    if(fcntl(sock,F_SETFL,opts)<0)
-    {
-        perror("fcntl(sock,SETFL,opts)");
-        exit(1);
-    }
+  int newopt = oldopt | O_NONBLOCK;
+  if (fcntl(fd, F_SETFL, newopt) < 0) {
+    return -1;
+  }
+  return oldopt;
 }
 
-int main(int argc, char* argv[])
-{
-    int i, maxi, listenfd, connfd, sockfd,epfd,nfds, portnumber;
-    ssize_t n;
-    char line[MAXLINE];
-    socklen_t clilen;
+int set_reuse_addr(int sockfd, int reuse) {
+  return setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(int));
+}
 
+void usage(char *progname) { fprintf(stderr, "Usage: %s <port>\n", progname); }
 
-    if ( 2 == argc )
-    {
-        if( (portnumber = atoi(argv[1])) < 0 )
-        {
-            fprintf(stderr,"Usage:%s portnumber/a/n",argv[0]);
-            return 1;
+int main(int argc, char *argv[]) {
+  int listenfd;
+  int epfd;
+  int port;
+
+  if (argc != 2) {
+    usage(argv[0]);
+    exit(1);
+  }
+
+  if ((port = atoi(argv[1])) < 0) {
+    fprintf(stderr, "invalid port: %s", argv[1]);
+    exit(1);
+  }
+
+  // socket()
+  listenfd = socket(AF_INET, SOCK_STREAM, 0);
+
+  int reuse = 1;
+  if (set_reuse_addr(listenfd, reuse) < 0) {
+    perror("set_reuse_addr");
+    return 1;
+  }
+  struct sockaddr_in serveraddr;
+  memset(&serveraddr, 0, sizeof(struct sockaddr_in));
+  serveraddr.sin_family = AF_INET;
+  if (inet_aton("127.0.0.1", &(serveraddr.sin_addr)) < 0) {
+    perror("inet_aton");
+    return 1;
+  }
+  serveraddr.sin_port = htons(port);
+  // bind()
+  if (bind(listenfd, (struct sockaddr *)&serveraddr,
+           sizeof(struct sockaddr_in)) < 0) {
+    perror("bind");
+    return 1;
+  }
+  // listen()
+  if (listen(listenfd, LISTEN_BACKLOG) < 0) {
+    perror("listen");
+    return 1;
+  }
+  // epoll_create1
+  if ((epfd = epoll_create1(0)) < 0) {
+    perror("epoll_create1");
+    return 1;
+  }
+
+  struct epoll_event event, *events;
+  int connfd, sockfd, nfds;
+  event.data.fd = listenfd;
+  event.events = EPOLLIN;  // 默认水平触发模式
+  // 注册epoll事件
+  if (epoll_ctl(epfd, EPOLL_CTL_ADD, listenfd, &event) < 0) {
+    perror("epoll_ctl");
+    return 1;
+  }
+
+  events = malloc(MAX_EVENTS * sizeof(struct epoll_event));
+  char line[MAX_LINE + 1];
+  struct sockaddr_in clientaddr;
+  socklen_t clientlen;
+  for (;;) {
+    // 等待epoll事件的发生
+    nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+    if (nfds < 0) {
+      perror("epoll_wait");
+      return 1;
+    }
+
+    // 处理所有事件
+    for (int i = 0; i < nfds; i++) {
+      if (events[i].data.fd == listenfd) {  // 客户端连接请求进来了
+        connfd = accept(listenfd, (struct sockaddr *)&clientaddr, &clientlen);
+        if (connfd < 0) {
+          perror("accept");
+          continue;
         }
-    }
-    else
-    {
-        fprintf(stderr,"Usage:%s portnumber/a/n",argv[0]);
-        return 1;
-    }
 
+        printf("accept a connection from %s:%d, fd=%d\n",
+               inet_ntoa(clientaddr.sin_addr), ntohs(clientaddr.sin_port),
+               connfd);
 
-
-    //声明epoll_event结构体的变量,ev用于注册事件,数组用于回传要处理的事件
-    struct epoll_event ev,events[20];
-    //生成用于处理accept的epoll专用的文件描述符
-
-    epfd=epoll_create(256);
-    struct sockaddr_in clientaddr;
-    struct sockaddr_in serveraddr;
-    listenfd = socket(AF_INET, SOCK_STREAM, 0);
-    //把socket设置为非阻塞方式
-
-    //setnonblocking(listenfd);
-
-    //设置与要处理的事件相关的文件描述符
-    ev.data.fd=listenfd;
-    //设置要处理的事件类型
-    ev.events=EPOLLIN|EPOLLET;
-    //注册epoll事件
-    epoll_ctl(epfd,EPOLL_CTL_ADD,listenfd,&ev);
-
-    bzero(&serveraddr, sizeof(serveraddr));
-    serveraddr.sin_family = AF_INET;
-    char *local_addr="127.0.0.1";
-    inet_aton(local_addr,&(serveraddr.sin_addr));//htons(portnumber);
-
-    serveraddr.sin_port=htons(portnumber);
-    bind(listenfd,(sockaddr *)&serveraddr, sizeof(serveraddr));
-    listen(listenfd, LISTENQ);
-    maxi = 0;
-    for ( ; ; ) {
-        //等待epoll事件的发生
-        nfds=epoll_wait(epfd,events,20,500);
-
-        //处理所发生的所有事件
-        for(i=0;i<nfds;++i)
-        {
-            if(events[i].data.fd==listenfd)//如果新监测到一个SOCKET用户连接到了绑定的SOCKET端口，建立新的连接。
-            {
-                connfd = accept(listenfd,(sockaddr *)&clientaddr, &clilen);
-                if(connfd<0){
-                    perror("connfd<0");
-                    exit(1);
-                }
-                //setnonblocking(connfd);
-                char *str = inet_ntoa(clientaddr.sin_addr);
-                cout << "accapt a connection from " << str << endl;
-
-                //设置用于读操作的文件描述符
-                ev.data.fd=connfd;
-                //设置用于注测的读操作事件
-                ev.events=EPOLLIN|EPOLLET;
-                //注册ev
-                epoll_ctl(epfd,EPOLL_CTL_ADD,connfd,&ev);
-            }
-            else if(events[i].events&EPOLLIN)//如果是已经连接的用户，并且收到数据，那么进行读入。
-            {
-                cout << "EPOLLIN" << endl;
-                if ( (sockfd = events[i].data.fd) < 0)
-                    continue;
-                if ( (n = read(sockfd, line, MAXLINE)) < 0) {
-                    if (errno == ECONNRESET) {
-                        close(sockfd);
-                        events[i].data.fd = -1;
-                    } else
-                        std::cout<<"readline error"<<std::endl;
-                } else if (n == 0) {
-                    close(sockfd);
-                    events[i].data.fd = -1;
-                }
-                line[n] = '/0';
-                cout << "read " << line << endl;
-                //设置用于写操作的文件描述符
-
-                ev.data.fd=sockfd;
-                //设置用于注测的写操作事件
-
-                ev.events=EPOLLOUT|EPOLLET;
-                //修改sockfd上要处理的事件为EPOLLOUT
-
-                //epoll_ctl(epfd,EPOLL_CTL_MOD,sockfd,&ev);
-            }
-            else if(events[i].events&EPOLLOUT) // 如果有数据发送
-            {
-                sockfd = events[i].data.fd;
-                write(sockfd, line, n);
-                //设置用于读操作的文件描述符
-
-                ev.data.fd=sockfd;
-                //设置用于注测的读操作事件
-
-                ev.events=EPOLLIN|EPOLLET;
-                //修改sockfd上要处理的事件为EPOLIN
-
-                epoll_ctl(epfd,EPOLL_CTL_MOD,sockfd,&ev);
-            }
+        // 注册event
+        event.data.fd = connfd;
+        event.events = EPOLLIN;  // 默认边缘触发模式
+        if (epoll_ctl(epfd, EPOLL_CTL_ADD, connfd, &event) < 0) {
+          perror("epoll_ctl");
         }
+        continue;
+      }
+
+      if (events[i].events & EPOLLIN) {  // 读取客户端输入内容
+        if ((sockfd = events[i].data.fd) < 0) continue;
+
+        ssize_t nread;
+        nread = read(sockfd, line, MAX_LINE);
+        if (nread < 0) {
+          if (errno == ECONNRESET) {  // 客户端异常掉线
+            printf("client fd=%d lost connection\n", sockfd);
+            if (epoll_ctl(epfd, EPOLL_CTL_DEL, sockfd, NULL) <
+                0) {  // 移除掉监听事件
+              perror("epoll_ctl");
+            }
+            close(sockfd);
+            events[i].data.fd = -1;
+          } else {
+            perror("read");
+            close(sockfd);
+            if (epoll_ctl(epfd, EPOLL_CTL_DEL, sockfd, NULL) < 0) {
+              perror("epoll_ctl");
+            }
+            events[i].data.fd = -1;
+          }
+        } else if (nread == 0) {  // 客户端正常下线
+          printf("client fd=%d normal exit\n", sockfd);
+          close(sockfd);
+          events[i].data.fd = -1;
+        } else {
+          line[nread] = '\0';
+          printf("received: %s\n", line);
+
+          int nwrite = 0;
+          int n;
+          while (nwrite < nread) {  // 保证完成写入完成
+            if ((n = write(sockfd, line + nwrite, nread)) < 0) {
+              fprintf(stderr, "write fd=%d error: %s\n", sockfd,
+                      strerror(errno));
+              break;
+            }
+            nwrite += n;
+          }
+        }
+      }
     }
-    return 0;
+  }
 }
 ```
 
