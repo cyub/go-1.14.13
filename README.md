@@ -62,3 +62,4 @@ Golang版本是go1.14.13。相关电子书：[《深入Go语言之旅》](https:
 	- [x] [go tool compile](./notes/misc/compile_tool.md)
 	- [x] [Go 语言命令概览](./notes/misc/go_tools.md)
 	- [x] [具有特殊含义的退出码](./notes/misc/exit_code.md)
+	- [x] [Go 语言内置接口列表](./notes/misc/builtin_interfaces.md)
