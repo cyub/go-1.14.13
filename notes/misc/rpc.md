@@ -16,7 +16,7 @@ encoding/gob编码 | ✅ | ✅
 json-rpc | ✅ | ✅
 
 
-Go内置RPC默认使用encode/gob进行传输内容的编码和解码，此外还支持json编码和解码，它大致实现json-rpc v2.0功能。
+Go内置RPC默认使用`encoding/gob`进行传输内容的编码和解码，此外还支持json编码和解码，但它只实现了json-rpc v1.0功能。
 
 ## net/rpc用例
 
@@ -212,6 +212,194 @@ func main() {
 }
 ```
 
+## 代码分析
+
+### 服务端
+
+RPC服务端接收请求数据，然后异步处理响应：
+
+```go
+// ServeCodec is like ServeConn but uses the specified codec to
+// decode requests and encode responses.
+func (server *Server) ServeCodec(codec ServerCodec) {
+	sending := new(sync.Mutex)
+	wg := new(sync.WaitGroup)
+	for {
+		service, mtype, req, argv, replyv, keepReading, err := server.readRequest(codec) // 读取请求对象
+		if err != nil {
+			if debugLog && err != io.EOF {
+				log.Println("rpc:", err)
+			}
+			if !keepReading {
+				break
+			}
+			// send a response if we actually managed to read a header.
+			if req != nil {
+				server.sendResponse(sending, req, invalidRequest, codec, err.Error())
+				server.freeRequest(req)
+			}
+			continue
+		}
+		wg.Add(1)
+		go service.call(server, sending, wg, mtype, req, argv, replyv, codec) // 异步处理请求数据，并响应
+	}
+	// We've seen that there are no more requests.
+	// Wait for responses to be sent before closing codec.
+	wg.Wait() // 当客户端主动关闭连接（半关闭）时候，考虑到处理请求是异步的，所以需要一个同步机制来保证所有请求处理完成。
+	// 这里使用waitgroup，当前一个请求过来后Add(1)，当一个请求处理完成后Done()
+	codec.Close()
+}
+```
+
+### 客户端
+
+**发送请求**：
+
+客户端`Go`接口串行发送数据，并通过等待通道获取请求响应状态：
+
+```go
+func (client *Client) Go(serviceMethod string, args any, reply any, done chan *Call) *Call {
+	call := new(Call)
+	call.ServiceMethod = serviceMethod
+	call.Args = args
+	call.Reply = reply
+	if done == nil {
+		done = make(chan *Call, 10) // buffered.
+	} else {
+		// If caller passes done != nil, it must arrange that
+		// done has enough buffer for the number of simultaneous
+		// RPCs that will be using that channel. If the channel
+		// is totally unbuffered, it's best not to run at all.
+		if cap(done) == 0 {
+			log.Panic("rpc: done channel is unbuffered")
+		}
+	}
+	call.Done = done // done通道用于等待响应状态，当请求完成，done是可读取状态状态
+	client.send(call)
+	return call
+}
+
+func (client *Client) send(call *Call) {
+	client.reqMutex.Lock() // reqMutex锁保证发送数据的顺序
+	defer client.reqMutex.Unlock()
+
+	// Register this call.
+	client.mutex.Lock()
+	if client.shutdown || client.closing {
+		client.mutex.Unlock()
+		call.Error = ErrShutdown
+		call.done()
+		return
+	}
+	seq := client.seq // seq是请求的唯一ID
+	client.seq++
+	client.pending[seq] = call // 请求ID与请求对象绑定
+	client.mutex.Unlock()
+
+	// Encode and send the request.
+	client.request.Seq = seq
+	client.request.ServiceMethod = call.ServiceMethod
+	err := client.codec.WriteRequest(&client.request, call.Args)
+	if err != nil {
+		client.mutex.Lock()
+		call = client.pending[seq]
+		delete(client.pending, seq)
+		client.mutex.Unlock()
+		if call != nil {
+			call.Error = err
+			call.done()
+		}
+	}
+}
+```
+
+**响应处理：**
+
+客户端创建时候，专门启动一个`input`协程处理服务端响应：
+
+```go
+func NewClientWithCodec(codec ClientCodec) *Client {
+	client := &Client{
+		codec:   codec,
+		pending: make(map[uint64]*Call),
+	}
+	go client.input()
+	return client
+}
+```
+
+`input`协程会读取服务端响应数据，获取请求ID后找到其关联的请求对象，然后将响应写入到请求对象Reply属性中，并将请求对象的done通道close掉，来通知等待done通道的客户端请求完成：
+
+```go
+func (client *Client) input() {
+	var err error
+	var response Response
+	for err == nil {
+		response = Response{}
+		err = client.codec.ReadResponseHeader(&response)
+		if err != nil {
+			break
+		}
+		seq := response.Seq
+		client.mutex.Lock()
+		call := client.pending[seq] // 获取请求ID对应的请求对象
+		delete(client.pending, seq)
+		client.mutex.Unlock()
+
+		switch {
+		case call == nil:
+			// We've got no pending call. That usually means that
+			// WriteRequest partially failed, and call was already
+			// removed; response is a server telling us about an
+			// error reading request body. We should still attempt
+			// to read error body, but there's no one to give it to.
+			err = client.codec.ReadResponseBody(nil)
+			if err != nil {
+				err = errors.New("reading error body: " + err.Error())
+			}
+		case response.Error != "":
+			// We've got an error response. Give this to the request;
+			// any subsequent requests will get the ReadResponseBody
+			// error if there is one.
+			call.Error = ServerError(response.Error)
+			err = client.codec.ReadResponseBody(nil)
+			if err != nil {
+				err = errors.New("reading error body: " + err.Error())
+			}
+			call.done()
+		default:
+			err = client.codec.ReadResponseBody(call.Reply) // 读取响应数据到call对象中
+			if err != nil {
+				call.Error = errors.New("reading body " + err.Error())
+			}
+			call.done()
+		}
+	}
+	// Terminate pending calls.
+	client.reqMutex.Lock()
+	client.mutex.Lock()
+	client.shutdown = true
+	closing := client.closing
+	if err == io.EOF {
+		if closing {
+			err = ErrShutdown
+		} else {
+			err = io.ErrUnexpectedEOF
+		}
+	}
+	for _, call := range client.pending {
+		call.Error = err
+		call.done()
+	}
+	client.mutex.Unlock()
+	client.reqMutex.Unlock()
+	if debugLog && err != io.EOF && !closing {
+		log.Println("rpc: client protocol error:", err)
+	}
+}
+```
+
 ## 资料
 
 - [关于HTTP CONNECT方法](https://www.zhihu.com/tardis/bd/art/533663637)
+- [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
