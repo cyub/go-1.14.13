@@ -505,6 +505,151 @@ power:
 
 2. 在现代的编译器和处理器中，`leave` 指令通常被用来替代传统的 `mov ebp, esp`和 `pop ebp` 指令序列，因为它是一个单字节指令，可以更高效地执行上述两个操作。
 
+## ABI
+
+ABI（Application Binary Interface）是硬件平台和操作系统上的一种标准，它定义了以下内容：
+
+- 函数调用约定：参数如何传递、返回值如何传递、寄存器如何使用等。
+- 二进制格式：比如可执行文件的格式（ELF 在 Linux 上常见）。
+- 栈布局：如何管理函数调用栈。
+- 数据类型布局：结构体、数组等数据类型的内存布局和对齐方式。
+
+
+
+### System V AMD64 ABI 与 Linux C 调用约定
+
+Linux C 调用约定（或更广义的 C 调用约定）定义了在 C 语言程序中函数的调用规则，而这些规则的底层实现依赖于系统的 ABI（Application Binary Interface）。在 Linux 上，C 调用约定遵循 System V AMD64 ABI 的规范， Linux C 调用约定相当于System V AMD64 ABI 的规范的子集。
+
+#### 参数传递
+
+- 传递参数时，按照从左到右的顺序，将尽可能多的参数依次保存在寄存器中
+  - 整数或指针类型参数通过寄存器 `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` 传递
+  - 浮点类型参数通过寄存器 `xmm0`，`xmm1`，`xmm2`，`xmm3`，`xmm4`，`xmm5`，`xmm6`，`xmm7`
+- 超出寄存器数量的参数通过栈传递，按照从右到左的顺序压入栈中，并在调用之后 由调用函数推出栈 
+  - 栈上的参数以 8 字节对齐
+
+示例：
+
+C代码：
+
+```c
+void my_function(int a, double b, int c, double d);
+```
+
+汇编调用：
+
+```assembly
+; rdi = a, xmm0 = b, rsi = c, xmm1 = d
+mov rdi, 1       ; 第 1 个参数：整数
+movq xmm0, qword [b_addr] ; 第 2 个参数：浮点数
+mov rsi, 2       ; 第 3 个参数：整数
+movq xmm1, qword [d_addr] ; 第 4 个参数：浮点数
+call my_function
+```
+
+#### 返回值
+
+- 整数（或者指针）返回值存放在 rax 或者 rdx:rax 中
+  - 如果返回的是结构体或数组
+    - 小结构体（≤ 16 字节）分拆到 rax 和 rdx
+    - 大结构体通过调用者提供的指针返回
+- 浮点数返回值存放在 xmm0 或者 xmm1:xmm0 中
+
+
+#### 栈布局
+
+- 栈指针（rsp）必须保持 16 字节对齐
+- 栈上的返回地址和参数按 ABI 规则存储
+
+如果通过栈传递参数（超出 6 个参数），栈布局如下：
+
+栈地址偏移 | 内容
+--- | ---
+rsp+16	| 第 7 个参数
+rsp+8	| 第 6 个参数
+rsp	 | 返回地址
+
+#### 调用方与被调用方职责
+
+调用方职责：
+  - 按照 ABI 规则准备参数
+  - 确保栈指针对齐
+  - 保存调用者保存寄存器（rax, rcx, r8-r11 等）中需要保留的值
+
+被调用方职责：
+
+  - 保存被调用者保存寄存器（rbx, rbp, r12-r15）。
+  - 管理自己的栈帧
+  - 按规则返回结果
+
+示例: C代码：
+
+```c
+int add(int a, int b) {
+    return a + b;
+}
+```
+
+示例：汇编调用：
+
+```assembly
+add:
+    push rbp              ; 保存调用者的栈基址
+    mov rbp, rsp          ; 设置新的栈基址
+    mov eax, edi          ; 获取第 1 个参数
+    add eax, esi          ; 加上第 2 个参数
+    pop rbp               ; 恢复调用者的栈基址
+    ret                   ; 返回
+```
+
+**注意**：对于Window平台上，遵循的是 `Windows x64 ABI` 规范。
+
+### 调用者保存寄存器（caller-saved registers）和 被调用者保存寄存器（callee-saved registers）
+
+System V AMD64 ABI 中明确定义了 调用者保存寄存器（caller-saved registers）和 被调用者保存寄存器（callee-saved registers）的概念。这种分类是为了在函数调用中分配寄存器保存责任，从而优化寄存器使用和性能。
+
+#### 调用者保存寄存器
+
+调用者保存寄存器 是那些在函数调用时，由调用函数（caller）负责保存和恢复的寄存器。如果调用者需要在调用函数后继续使用这些寄存器中的值，它必须在调用前手动保存（比如推到栈上），并在调用后手动恢复。
+
+##### 调用者保存寄存器列表
+
+寄存器  |  用途
+--- | ---
+rax  |  函数返回值，或临时数据
+rdi  |  第 1 个参数
+rsi  |  第 2 个参数
+rdx  |  第 3 个参数
+rcx  |  第 4 个参数
+r8  |  第 5 个参数
+r9  |  第 6 个参数
+r10  |  临时寄存器
+r11  |  临时寄存器
+xmm0-7  |  浮点参数和返回值寄存器
+xmm8-15  |  临时浮点寄存器
+
+##### 调用者保存寄存器的使用规则
+
+- 函数调用后，这些寄存器的值可能被覆盖。
+- 如果调用者需要保留这些寄存器的值，必须在调用前保存，调用后恢复。
+
+#### 被调用者保存寄存器
+
+被调用者保存寄存器 是那些在函数调用中，由被调用函数（callee）负责保存和恢复的寄存器。调用者可以假定这些寄存器在函数调用后保持不变。
+
+##### 被调用者保存寄存器列表
+寄存器  |  用途
+--- | ---
+rbx  |  被调用者保存的通用寄存器
+rbp  |  基址指针寄存器
+rsp  |  栈指针寄存器
+r12-r15  |  被调用者保存的通用寄存器
+
+##### 被调用者保存寄存器的使用规则
+
+- 如果被调用函数修改了这些寄存器的值，它必须在修改之前保存原值，并在函数返回之前恢复。
+- 栈指针（rsp）是特殊的：它必须在函数调用过程中保持正确的栈帧状态。
+
 ## PC
 
 `PC` 指的是程序计数器，是 `Program Counter` 的缩写，是一个中央处理器中的寄存器，用于指示计算机在其程序序列中的位置。在 `Intel x86` 和 `Itanium` 微处理器中，它叫做 **指令指针（instruction pointer，IP）**，又称为 **指令地址寄存器（instruction address register，IAR）**。
@@ -573,12 +718,6 @@ rax | rdi | rsi | rdx | r10 | r8 | r9 | rax
 7ffdcc3b8000-7ffdcc3ba000 r-xp 00000000 00:00 0                          [vdso]
 ffffffffff600000-ffffffffff601000 r-xp 00000000 00:00 0                  [vsyscall]
 ```
-
-### Linux C 调用约定
-
-1<sup>st</sup> parameter 	| 2<sup>nd</sup> parameter |	3<sup>rd</sup> parameter |	4<sup>th</sup> parameter |	5<sup>th</sup> parameter  |	6<sup>th</sup> parameter | result
---- | --- | --- | --- | --- | --- | ---
-rdi |	rsi |	rdx  |	rcx |	r8 |	r9 | rax
 
 ## 指令周期
 
