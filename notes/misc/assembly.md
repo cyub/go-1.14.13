@@ -310,6 +310,36 @@ movl $123, %eax // 4 byte
 movq $123, %eax // 8 byte
 ```
 
+##### 条件移动指令
+
+条件移动指令（Conditional Move Instructions） 是一组可以根据特定条件码来决定是否执行数据移动的指令。
+
+条件移动指令   |   描述（条件）
+--- | ---
+cmova   |   无符号大于（CF = 0 且 ZF = 0）
+cmovae   |   无符号大于等于（CF = 0）
+cmovb   |   无符号小于（CF = 1）
+cmovbe   |   无符号小于等于（CF = 1 或 ZF = 1）
+cmovg   |   有符号大于（ZF = 0 且 SF = OF）
+cmovge   |   有符号大于等于（SF = OF）
+cmovl   |   有符号小于（SF ≠ OF）
+cmovle   |   有符号小于等于（ZF = 1 或 SF ≠ OF）
+cmove   |   等于（ZF = 1）
+cmovne   |   不等于（ZF = 0）
+cmovo   |   溢出（OF = 1）
+cmovno   |   无溢出（OF = 0）
+cmovs   |   负数（SF = 1）
+cmovns   |   非负数（SF = 0）
+cmovp   |   奇偶性偶数（PF = 1）
+cmovnp   |   奇偶性奇数（PF = 0）
+
+```assembly
+; 实现max(a, b)函数
+mov %rdi %rax ; 将第一个参数保存到rax中
+cmp %rsi, %rax; 将第一个参数与第二个参数进行比较
+cmovl %rsi, %rax; 如果第二个参数大于第一个参数，则将第二个参数保存到rax中返回
+```
+
 #### 算术运算指令
 
 指令 | 作用 | 示例  |  注意事项
@@ -630,7 +660,7 @@ main:
 
 #### 栈布局
 
-- 栈指针（rsp）必须保持 16 字节对齐
+- **调用函数时，栈指针（rsp）必须保持 16 字节对齐**
 - 栈上的返回地址和参数按 ABI 规则存储
 
 如果通过栈传递参数（超出 6 个参数），栈布局如下：
@@ -640,6 +670,42 @@ main:
 rsp+16	| 第 9 个参数
 rsp+8	| 第 8 个参数
 rsp	 | 第 7 个参数
+
+示例：
+
+```assembly
+; -----------------------------------------------------------------------------
+; 一个显示命令行参数的 64 位程序。一行一个地输出。
+;
+; 在函数入口处,rdi 保存 argc 的值,rsi 保存 argv 的值。
+; nasm -felf64 echo.asm && gcc echo.o && ./a.out hello world
+; -----------------------------------------------------------------------------
+
+        global  main
+        extern  puts
+        section .text
+main:
+        push    rdi                     ; 保存 puts 函数需要用到的寄存器 
+        push    rsi
+        sub     rsp, 8                  ; 调用函数前让栈顶对齐, 注意此处需要是将rsp减8
+
+        mov     rdi, [rsi]              ; 需要输出的字符串参数 
+        call    puts                    ; 调用 puts 输出 /span>
+
+        add     rsp, 8                  ; 恢复 %rsp 到未对齐前的值 
+        pop     rsi                     ; 恢复 puts 用到的寄存器 
+        pop     rdi
+
+        add     rsi, 8                  ; 指向下一个参数 
+        dec     rdi                     ; 递减 
+        jnz     main                    ; 如果未读完参数则继续 
+
+        ret
+```
+
+上面示例中`push rdi` 和 `push rsi` 操作之后，rsp一定是16字节对齐的，为啥还要手动`sub rsp, 8` 操作？
+
+这是因为调用 `puts` 时候，会将返回地址压入栈中（占用8字节），如果没有`sub rsp, 8`，那么调用 `puts` 时候，`rsp` 是非对齐状态，不符合栈布局要求的第一条（调用函数时，栈指针（rsp）必须保持 16 字节对齐）。为了避免这种情况，提前执行 `sub rsp, 8`，让栈在 `call puts` 前处于非对齐状态，这样 `call` 之后栈就重新回到 16 字节对齐 状态。
 
 #### 调用方与被调用方职责
 
