@@ -22,9 +22,6 @@
         - Unix派系的GCC编译器
 2. 基于 `ARM` 架构处理器的汇编语言
 
-
-
-
 ### 数据单元大小
 
 汇编中数据单元大小可分为：
@@ -95,6 +92,17 @@ r8w  |  16 位  |  r8 的低 16 位部分
 r8b  |  8 位  |  r8 的低 8 位部分
 
 例如，`r8` 表示 64 位寄存器，而 `r8d` 仅操作低 32 位。
+
+#### xmm0-xmm15
+
+xmm0-15 是 SIMD（Single Instruction Multiple Data）寄存器，属于 SSE（Streaming SIMD Extensions） 指令集的一部分，用于在 x86-64 架构中进行高效的向量和浮点运算。
+
+属性 | 描述
+--- | ---
+寄存器宽度 | 每个寄存器为 128 位，可以存储多种数据类型，例如浮点数和整数向量。
+寄存器数量 | - 32 位模式：仅支持 xmm0 到 xmm7（8 个寄存器）。<br/>- 64 位模式：扩展为 xmm0 到 xmm15（16 个寄存器）。
+数据类型支持 | - 单精度浮点数（32 位）：每寄存器可存储 4 个值。<br/>- 双精度浮点数（64 位）：每寄存器可存储 2 个值。<br/> - 支持整数和字节操作。
+用途 | - SIMD 运算：用于矢量化计算（如批量加法、乘法）。<br/>- 标量浮点运算：处理单个浮点值。<br/>- 函数调用约定：传递浮点参数和返回值。
 
 ## CPU对存储器的读写
 
@@ -189,7 +197,7 @@ Low Addresses ----> '----------------------'
 
 ![](https://static.cyub.vip/images/202102/process_mem_layout.jpeg)
 
-实际上分配的进程空间并不是从 `0x00000000` 开始的，而是从 `0x08048000` 开始，到 `0xbfffffff` 结束。进程实际的 `esp` 指向的地址并不是从 `0xbfffffff` 开始的，因为linux系统会在程序初始化前，将一些命令行参数及环境变量以及 `ELF` 辅助向量（`ELF Auxiliary Vectors`)等信息放到栈上。进程启动时，其空间布局如下所示（注意图示中地址是从低地址到高地址的）：
+实际上分配的进程空间并不是从 `0x00000000` 开始的，而是从 `0x08048000` 开始，到 `0xbfffffff` 结束。进程实际的 `esp` 指向的地址并不是从 `0xbfffffff` 开始的，因为linux系统会在程序初始化前，将一些命令行参数及环境变量以及 `ELF` 辅助向量（`ELF Auxiliary Vectors`）等信息放到栈上。进程启动时，其空间布局如下所示（注意图示中地址是从低地址到高地址的）：
 
 ```
 stack pointer ->    [ argc = number of args ]     4
@@ -269,6 +277,7 @@ instruction src dst
 #### 指令后缀与操作数格式
 
 **指令后缀：**
+
 后缀 | 含义 | 位数
 --- | --- | ---
 b | byte | 8位
@@ -278,6 +287,36 @@ l  | long | 32位
 q | quad | 64位
 
 当可以推断出后缀时，后缀被省略操作数。例如操作数%rax 意味着 q，%eax 意味着 l，依此类推。
+
+对 `SIMD` 寄存器  xmm0-15 的操作的指令后缀如下：
+
+后缀 | 数据类型 | 操作方式
+--- | --- | ---
+ss | 单精度浮点数标量(Scalar Single-Precision Floating-Point) | 标量（一个元素）
+sd | 双精度浮点数标量(Scalar Double-Precision Floating-Point) | 标量（一个元素）
+ps | 单精度浮点数向量(Packed Single-Precision Floating-Point) | 向量（多个元素）
+pd | 双精度浮点数向量(Scalar Double-Precision Floating-Point) | 向量（多个元素）
+
+**示例1**： 
+
+```assembly
+addsd xmm1, xmm2/m64
+````
+- xmm1: 目标寄存器，同时也是操作数1。
+- xmm2/m64: 源操作数，可以是另一个寄存器或内存地址。
+
+作用：
+
+- 将 xmm1 的低 64 位（对应一个标量双精度浮点数）与 xmm2/m64 的低 64 位相加，并将结果存储在 xmm1 的低 64 位中。
+- xmm1 的高 64 位保持不变。
+
+**示例2**：
+
+```assembly
+addps xmm0, xmm1
+```
+
+上面操作是对 xmm0 和 xmm1 中的单精度浮点向量逐元素相加，属于 SIMD 运算。
 
 **操作数格式：**
 格式 | 操作数类型
@@ -675,6 +714,7 @@ rsp	 | 第 7 个参数
 
 ```assembly
 ; -----------------------------------------------------------------------------
+; @see https://godbolt.org/z/q7r6vj9TP
 ; 一个显示命令行参数的 64 位程序。一行一个地输出。
 ;
 ; 在函数入口处,rdi 保存 argc 的值,rsi 保存 argv 的值。
@@ -690,7 +730,7 @@ main:
         sub     rsp, 8                  ; 调用函数前让栈顶对齐, 注意此处需要是将rsp减8
 
         mov     rdi, [rsi]              ; 需要输出的字符串参数 
-        call    puts                    ; 调用 puts 输出 /span>
+        call    puts                    ; 调用 puts 输出
 
         add     rsp, 8                  ; 恢复 %rsp 到未对齐前的值 
         pop     rsi                     ; 恢复 puts 用到的寄存器 
